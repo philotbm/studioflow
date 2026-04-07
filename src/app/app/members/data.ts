@@ -18,7 +18,19 @@ export type MemberInsights = {
   preCutoffCancels: number;
   postCutoffCancels: number;
   behaviourScore: number;
+  behaviourLabel: "Strong" | "Mixed" | "Needs attention";
   classMix: ClassMixEntry[];
+};
+
+export type PurchaseRecord = {
+  item: string;
+  date: string;
+};
+
+export type PurchaseInsights = {
+  activePlan: string;
+  previousPurchases: PurchaseRecord[];
+  buyerPattern: string;
 };
 
 export type Member = {
@@ -28,6 +40,7 @@ export type Member = {
   credits: number | null;
   status: "active" | "expiring" | "expired";
   insights: MemberInsights;
+  purchaseInsights: PurchaseInsights;
   history: HistoryEvent[];
 };
 
@@ -47,11 +60,19 @@ export const members: Member[] = [
       preCutoffCancels: 0,
       postCutoffCancels: 1,
       behaviourScore: 72,
+      behaviourLabel: "Mixed",
       classMix: [
         { label: "Reformer Pilates", count: 2 },
         { label: "Yoga Flow", count: 1 },
         { label: "Barre Tone", count: 1 },
       ],
+    },
+    purchaseInsights: {
+      activePlan: "Unlimited Monthly",
+      previousPurchases: [
+        { item: "10-Class Pass", date: "15 Mar" },
+      ],
+      buyerPattern: "Moved from packs to unlimited",
     },
     history: [
       { date: "10 Apr", event: "Reformer Pilates — Thu 09:00", type: "upcoming" },
@@ -80,11 +101,17 @@ export const members: Member[] = [
       preCutoffCancels: 0,
       postCutoffCancels: 0,
       behaviourScore: 98,
+      behaviourLabel: "Strong",
       classMix: [
         { label: "Reformer Pilates", count: 1 },
         { label: "Yoga Flow", count: 1 },
         { label: "Spin Express", count: 1 },
       ],
+    },
+    purchaseInsights: {
+      activePlan: "10-Class Pass",
+      previousPurchases: [],
+      buyerPattern: "First-time class pack buyer",
     },
     history: [
       { date: "7 Apr", event: "Reformer Pilates — Mon 09:00", type: "attended" },
@@ -108,10 +135,16 @@ export const members: Member[] = [
       preCutoffCancels: 0,
       postCutoffCancels: 0,
       behaviourScore: 100,
+      behaviourLabel: "Strong",
       classMix: [
         { label: "Spin Express", count: 1 },
         { label: "HIIT Circuit", count: 1 },
       ],
+    },
+    purchaseInsights: {
+      activePlan: "Unlimited Monthly",
+      previousPurchases: [],
+      buyerPattern: "New unlimited member",
     },
     history: [
       { date: "7 Apr", event: "Spin Express — Mon 12:30", type: "attended" },
@@ -134,11 +167,17 @@ export const members: Member[] = [
       preCutoffCancels: 1,
       postCutoffCancels: 0,
       behaviourScore: 80,
+      behaviourLabel: "Mixed",
       classMix: [
         { label: "Yoga Flow", count: 1 },
         { label: "Barre Tone", count: 1 },
         { label: "Reformer Pilates", count: 1 },
       ],
+    },
+    purchaseInsights: {
+      activePlan: "5-Class Pass",
+      previousPurchases: [],
+      buyerPattern: "First-time class pack buyer",
     },
     history: [
       { date: "8 Apr", event: "Yoga Flow — Tue 07:00", type: "upcoming" },
@@ -164,10 +203,16 @@ export const members: Member[] = [
       preCutoffCancels: 0,
       postCutoffCancels: 1,
       behaviourScore: 58,
+      behaviourLabel: "Needs attention",
       classMix: [
         { label: "HIIT Circuit", count: 2 },
         { label: "Spin Express", count: 2 },
       ],
+    },
+    purchaseInsights: {
+      activePlan: "10-Class Pass",
+      previousPurchases: [],
+      buyerPattern: "Usually buys class packs",
     },
     history: [
       { date: "8 Apr", event: "HIIT Circuit — Tue 18:00", type: "upcoming" },
@@ -195,9 +240,15 @@ export const members: Member[] = [
       preCutoffCancels: 0,
       postCutoffCancels: 0,
       behaviourScore: 100,
+      behaviourLabel: "Strong",
       classMix: [
         { label: "Barre Tone", count: 1 },
       ],
+    },
+    purchaseInsights: {
+      activePlan: "Unlimited Monthly",
+      previousPurchases: [],
+      buyerPattern: "New unlimited member",
     },
     history: [
       { date: "9 Apr", event: "Barre Tone — Wed 10:00", type: "upcoming" },
@@ -220,12 +271,18 @@ export const members: Member[] = [
       preCutoffCancels: 0,
       postCutoffCancels: 0,
       behaviourScore: 95,
+      behaviourLabel: "Strong",
       classMix: [
         { label: "Spin Express", count: 2 },
         { label: "Yoga Flow", count: 1 },
         { label: "HIIT Circuit", count: 1 },
         { label: "Barre Tone", count: 1 },
       ],
+    },
+    purchaseInsights: {
+      activePlan: "5-Class Pass (exhausted)",
+      previousPurchases: [],
+      buyerPattern: "Reliable pack user — may repurchase",
     },
     history: [
       { date: "7 Apr", event: "Spin Express — Mon 12:30", type: "attended" },
@@ -251,7 +308,13 @@ export const members: Member[] = [
       preCutoffCancels: 0,
       postCutoffCancels: 0,
       behaviourScore: 100,
+      behaviourLabel: "Strong",
       classMix: [],
+    },
+    purchaseInsights: {
+      activePlan: "Drop-in Trial",
+      previousPurchases: [],
+      buyerPattern: "Occasional drop-in buyer",
     },
     history: [
       { date: "6 Apr", event: "Trial pass activated", type: "purchase" },
@@ -272,7 +335,13 @@ export const members: Member[] = [
       preCutoffCancels: 0,
       postCutoffCancels: 0,
       behaviourScore: 100,
+      behaviourLabel: "Strong",
       classMix: [],
+    },
+    purchaseInsights: {
+      activePlan: "10-Class Pass",
+      previousPurchases: [],
+      buyerPattern: "New class pack buyer",
     },
     history: [
       { date: "8 Apr", event: "HIIT Circuit — Tue 18:00", type: "upcoming" },
@@ -294,10 +363,16 @@ export const members: Member[] = [
       preCutoffCancels: 0,
       postCutoffCancels: 0,
       behaviourScore: 100,
+      behaviourLabel: "Strong",
       classMix: [
         { label: "Yoga Flow", count: 1 },
         { label: "Barre Tone", count: 1 },
       ],
+    },
+    purchaseInsights: {
+      activePlan: "5-Class Pass",
+      previousPurchases: [],
+      buyerPattern: "First-time class pack buyer",
     },
     history: [
       { date: "1 Apr", event: "Yoga Flow — Tue 07:00", type: "attended" },

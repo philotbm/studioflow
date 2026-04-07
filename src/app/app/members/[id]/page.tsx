@@ -15,16 +15,16 @@ function statusLine(member: Member): { label: string; style: string } {
   return { label: `${member.credits} credits remaining`, style: "text-white/60" };
 }
 
-function scoreColor(score: number): string {
-  if (score >= 90) return "text-green-400";
-  if (score >= 70) return "text-amber-400";
+function behaviourColor(label: string): string {
+  if (label === "Strong") return "text-green-400";
+  if (label === "Mixed") return "text-amber-400";
   return "text-red-400";
 }
 
 const eventColor: Record<string, string> = {
   upcoming: "text-white/60",
   attended: "text-green-400",
-  late_cancel: "text-red-400",
+  late_cancel: "text-amber-400",
   no_show: "text-red-400",
   purchase: "text-blue-400",
   started: "text-blue-400",
@@ -57,6 +57,7 @@ export default async function MemberDetailPage({
 
   const status = statusLine(member);
   const ins = member.insights;
+  const pi = member.purchaseInsights;
 
   return (
     <main className="mx-auto max-w-2xl">
@@ -91,12 +92,6 @@ export default async function MemberDetailPage({
             <p className="text-lg font-semibold">{ins.totalAttended}</p>
           </div>
           <div className="rounded border border-white/10 px-3 py-2">
-            <span className="text-xs text-white/40">Late cancels</span>
-            <p className={`text-lg font-semibold ${ins.lateCancels > 0 ? "text-red-400" : ""}`}>
-              {ins.lateCancels}
-            </p>
-          </div>
-          <div className="rounded border border-white/10 px-3 py-2">
             <span className="text-xs text-white/40">No-shows</span>
             <p className={`text-lg font-semibold ${ins.noShows > 0 ? "text-red-400" : ""}`}>
               {ins.noShows}
@@ -108,11 +103,13 @@ export default async function MemberDetailPage({
           </div>
           <div className="rounded border border-white/10 px-3 py-2">
             <span className="text-xs text-white/40">Pre-cutoff cancels</span>
-            <p className="text-lg font-semibold">{ins.preCutoffCancels}</p>
+            <p className={`text-lg font-semibold ${ins.preCutoffCancels > 0 ? "text-amber-400" : ""}`}>
+              {ins.preCutoffCancels}
+            </p>
           </div>
           <div className="rounded border border-white/10 px-3 py-2">
             <span className="text-xs text-white/40">Post-cutoff cancels</span>
-            <p className={`text-lg font-semibold ${ins.postCutoffCancels > 0 ? "text-red-400" : ""}`}>
+            <p className={`text-lg font-semibold ${ins.postCutoffCancels > 0 ? "text-amber-400" : ""}`}>
               {ins.postCutoffCancels}
             </p>
           </div>
@@ -120,12 +117,17 @@ export default async function MemberDetailPage({
             <span className="text-xs text-white/40">Avg hold before cancel</span>
             <p className="text-lg font-semibold">{ins.avgHoldBeforeCancel}</p>
           </div>
-          <div className="rounded border border-white/10 px-3 py-2 col-span-2 sm:col-span-2">
-            <span className="text-xs text-white/40">Behaviour score</span>
-            <p className={`text-lg font-semibold ${scoreColor(ins.behaviourScore)}`}>
+        </div>
+
+        {/* Reliability */}
+        <div className="mt-4 rounded border border-white/10 px-4 py-3">
+          <span className="text-xs text-white/40">Reliability</span>
+          <p className={`text-lg font-semibold ${behaviourColor(ins.behaviourLabel)}`}>
+            {ins.behaviourLabel}
+            <span className="ml-2 text-sm font-normal text-white/30">
               {ins.behaviourScore}/100
-            </p>
-          </div>
+            </span>
+          </p>
         </div>
 
         {ins.classMix.length > 0 && (
@@ -141,6 +143,37 @@ export default async function MemberDetailPage({
                 </span>
               ))}
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Purchase Insights */}
+      <div className="mt-8">
+        <h2 className="text-sm font-medium text-white/70">Purchase insights</h2>
+        <dl className="mt-3 flex flex-col gap-2 text-sm">
+          <div className="flex gap-2">
+            <dt className="text-white/40">Active plan</dt>
+            <dd className="text-white/80">{pi.activePlan}</dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="text-white/40">Buyer pattern</dt>
+            <dd className="text-white/60">{pi.buyerPattern}</dd>
+          </div>
+        </dl>
+        {pi.previousPurchases.length > 0 && (
+          <div className="mt-3">
+            <span className="text-xs text-white/40">Previous purchases</span>
+            <ul className="mt-1.5 flex flex-col gap-1.5">
+              {pi.previousPurchases.map((p, i) => (
+                <li
+                  key={i}
+                  className="flex items-center justify-between rounded border border-white/10 px-3 py-1.5"
+                >
+                  <span className="text-sm text-white/70">{p.item}</span>
+                  <span className="text-xs text-white/30">{p.date}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </div>
