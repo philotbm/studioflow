@@ -3,6 +3,8 @@ export type Attendee = {
   status: "booked" | "attended" | "late_cancel";
 };
 
+export type Lifecycle = "upcoming" | "live" | "completed";
+
 export type StudioClass = {
   id: string;
   name: string;
@@ -11,6 +13,7 @@ export type StudioClass = {
   booked: number;
   capacity: number;
   waitlistCount: number;
+  lifecycle: Lifecycle;
   attendees: Attendee[];
 };
 
@@ -23,6 +26,7 @@ export const upcomingClasses: StudioClass[] = [
     booked: 8,
     capacity: 12,
     waitlistCount: 0,
+    lifecycle: "completed",
     attendees: [
       { name: "Emma Kelly", status: "booked" },
       { name: "Ciara Byrne", status: "attended" },
@@ -42,6 +46,7 @@ export const upcomingClasses: StudioClass[] = [
     booked: 14,
     capacity: 16,
     waitlistCount: 0,
+    lifecycle: "live",
     attendees: [
       { name: "Declan Power", status: "attended" },
       { name: "Fiona Healy", status: "booked" },
@@ -57,6 +62,7 @@ export const upcomingClasses: StudioClass[] = [
     booked: 6,
     capacity: 10,
     waitlistCount: 0,
+    lifecycle: "completed",
     attendees: [
       { name: "Saoirse Flynn", status: "booked" },
       { name: "Grainne Doyle", status: "attended" },
@@ -71,6 +77,7 @@ export const upcomingClasses: StudioClass[] = [
     booked: 10,
     capacity: 10,
     waitlistCount: 3,
+    lifecycle: "upcoming",
     attendees: [
       { name: "Sean Brennan", status: "attended" },
       { name: "Padraig Roche", status: "attended" },
@@ -87,6 +94,7 @@ export const upcomingClasses: StudioClass[] = [
     booked: 3,
     capacity: 8,
     waitlistCount: 0,
+    lifecycle: "upcoming",
     attendees: [
       { name: "Clodagh Murray", status: "booked" },
       { name: "Aoibhinn Smyth", status: "booked" },
@@ -101,6 +109,7 @@ export const upcomingClasses: StudioClass[] = [
     booked: 11,
     capacity: 12,
     waitlistCount: 0,
+    lifecycle: "upcoming",
     attendees: [
       { name: "Emma Kelly", status: "booked" },
       { name: "Niamh Walsh", status: "attended" },
