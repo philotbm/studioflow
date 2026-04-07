@@ -9,10 +9,22 @@ function creditDisplay(member: Member) {
   return { text: `${member.credits} credits`, style: "text-white/50" };
 }
 
-const activityColor: Record<string, string> = {
+const eventColor: Record<string, string> = {
   upcoming: "text-white/60",
   attended: "text-green-400",
   late_cancel: "text-red-400",
+  no_show: "text-red-400",
+  purchase: "text-blue-400",
+  started: "text-blue-400",
+};
+
+const eventLabel: Record<string, string> = {
+  upcoming: "Upcoming",
+  attended: "Attended",
+  late_cancel: "Late cancel",
+  no_show: "No show",
+  purchase: "Purchase",
+  started: "Started",
 };
 
 export function generateStaticParams() {
@@ -50,18 +62,21 @@ export default async function MemberDetailPage({
         </div>
       </div>
 
-      {member.activity.length > 0 && (
+      {member.history.length > 0 && (
         <div className="mt-8">
-          <h2 className="text-sm font-medium text-white/70">Recent activity</h2>
+          <h2 className="text-sm font-medium text-white/70">History</h2>
           <ul className="mt-3 flex flex-col gap-2">
-            {member.activity.map((a, i) => (
+            {member.history.map((h, i) => (
               <li
                 key={i}
-                className="flex items-center justify-between rounded border border-white/10 px-4 py-2"
+                className="flex items-center justify-between gap-4 rounded border border-white/10 px-4 py-2"
               >
-                <span className="text-sm text-white/80">{a.detail}</span>
-                <span className={`text-xs ${activityColor[a.type]}`}>
-                  {a.label}
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-sm text-white/80 truncate">{h.event}</span>
+                  <span className="text-xs text-white/30">{h.date}</span>
+                </div>
+                <span className={`shrink-0 text-xs ${eventColor[h.type]}`}>
+                  {eventLabel[h.type]}
                 </span>
               </li>
             ))}
