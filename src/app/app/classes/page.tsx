@@ -1,11 +1,5 @@
-const upcomingClasses = [
-  { name: "Reformer Pilates", time: "Mon 09:00", instructor: "Sarah", booked: 8, capacity: 12 },
-  { name: "Spin Express", time: "Mon 12:30", instructor: "James", booked: 14, capacity: 16 },
-  { name: "Yoga Flow", time: "Tue 07:00", instructor: "Aoife", booked: 6, capacity: 10 },
-  { name: "HIIT Circuit", time: "Tue 18:00", instructor: "Mark", booked: 10, capacity: 10 },
-  { name: "Barre Tone", time: "Wed 10:00", instructor: "Sarah", booked: 3, capacity: 8 },
-  { name: "Reformer Pilates", time: "Thu 09:00", instructor: "Sarah", booked: 11, capacity: 12 },
-];
+import Link from "next/link";
+import { upcomingClasses } from "./data";
 
 export default function ClassesPage() {
   return (
@@ -18,26 +12,37 @@ export default function ClassesPage() {
       </div>
 
       <ul className="mt-6 flex flex-col gap-3">
-        {upcomingClasses.map((cls, i) => (
-          <li
-            key={i}
-            className="flex flex-col gap-1 rounded-lg border border-white/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-          >
-            <div className="flex flex-col gap-0.5">
-              <span className="text-sm font-medium">{cls.name}</span>
-              <span className="text-xs text-white/50">
-                {cls.time} &middot; {cls.instructor}
-              </span>
-            </div>
-            <span
-              className={`mt-1 text-xs sm:mt-0 ${
-                cls.booked >= cls.capacity ? "text-red-400" : "text-white/50"
-              }`}
-            >
-              {cls.booked}/{cls.capacity} booked
-            </span>
-          </li>
-        ))}
+        {upcomingClasses.map((cls) => {
+          const isFull = cls.booked >= cls.capacity;
+          return (
+            <li key={cls.id}>
+              <Link
+                href={`/app/classes/${cls.id}`}
+                className="flex flex-col gap-1 rounded-lg border border-white/10 px-4 py-3 hover:border-white/25 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium">{cls.name}</span>
+                  <span className="text-xs text-white/50">
+                    {cls.time} &middot; {cls.instructor}
+                  </span>
+                </div>
+                <span
+                  className={`mt-1 text-xs sm:mt-0 ${
+                    isFull ? "text-green-400" : "text-white/50"
+                  }`}
+                >
+                  {cls.booked}/{cls.capacity} booked
+                  {isFull && cls.waitlistCount > 0 && (
+                    <span className="text-white/40">
+                      {" "}
+                      &middot; {cls.waitlistCount} on waitlist
+                    </span>
+                  )}
+                </span>
+              </Link>
+            </li>
+          );
+        })}
       </ul>
     </main>
   );
