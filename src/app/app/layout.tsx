@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 const navItems = [
   { label: "Dashboard", href: "/app" },
   { label: "Classes", href: "/app/classes" },
-  { label: "Members", href: "/app" },
+  { label: "Members", href: "/app/members" },
 ];
 
 export default function AppLayout({
