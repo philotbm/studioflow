@@ -15,6 +15,9 @@ export type MemberInsights = {
   noShows: number;
   cancellationRate: string;
   avgHoldBeforeCancel: string;
+  preCutoffCancels: number;
+  postCutoffCancels: number;
+  behaviourScore: number;
   classMix: ClassMixEntry[];
 };
 
@@ -41,6 +44,9 @@ export const members: Member[] = [
       noShows: 1,
       cancellationRate: "17%",
       avgHoldBeforeCancel: "4 hours",
+      preCutoffCancels: 0,
+      postCutoffCancels: 1,
+      behaviourScore: 72,
       classMix: [
         { label: "Reformer Pilates", count: 2 },
         { label: "Yoga Flow", count: 1 },
@@ -71,6 +77,9 @@ export const members: Member[] = [
       noShows: 0,
       cancellationRate: "0%",
       avgHoldBeforeCancel: "N/A",
+      preCutoffCancels: 0,
+      postCutoffCancels: 0,
+      behaviourScore: 98,
       classMix: [
         { label: "Reformer Pilates", count: 1 },
         { label: "Yoga Flow", count: 1 },
@@ -96,6 +105,9 @@ export const members: Member[] = [
       noShows: 0,
       cancellationRate: "0%",
       avgHoldBeforeCancel: "N/A",
+      preCutoffCancels: 0,
+      postCutoffCancels: 0,
+      behaviourScore: 100,
       classMix: [
         { label: "Spin Express", count: 1 },
         { label: "HIIT Circuit", count: 1 },
@@ -119,6 +131,9 @@ export const members: Member[] = [
       noShows: 0,
       cancellationRate: "25%",
       avgHoldBeforeCancel: "2 hours",
+      preCutoffCancels: 1,
+      postCutoffCancels: 0,
+      behaviourScore: 80,
       classMix: [
         { label: "Yoga Flow", count: 1 },
         { label: "Barre Tone", count: 1 },
@@ -146,6 +161,9 @@ export const members: Member[] = [
       noShows: 1,
       cancellationRate: "17%",
       avgHoldBeforeCancel: "6 hours",
+      preCutoffCancels: 0,
+      postCutoffCancels: 1,
+      behaviourScore: 58,
       classMix: [
         { label: "HIIT Circuit", count: 2 },
         { label: "Spin Express", count: 2 },
@@ -174,6 +192,9 @@ export const members: Member[] = [
       noShows: 0,
       cancellationRate: "0%",
       avgHoldBeforeCancel: "N/A",
+      preCutoffCancels: 0,
+      postCutoffCancels: 0,
+      behaviourScore: 100,
       classMix: [
         { label: "Barre Tone", count: 1 },
       ],
@@ -196,6 +217,9 @@ export const members: Member[] = [
       noShows: 0,
       cancellationRate: "0%",
       avgHoldBeforeCancel: "N/A",
+      preCutoffCancels: 0,
+      postCutoffCancels: 0,
+      behaviourScore: 95,
       classMix: [
         { label: "Spin Express", count: 2 },
         { label: "Yoga Flow", count: 1 },
@@ -224,6 +248,9 @@ export const members: Member[] = [
       noShows: 0,
       cancellationRate: "0%",
       avgHoldBeforeCancel: "N/A",
+      preCutoffCancels: 0,
+      postCutoffCancels: 0,
+      behaviourScore: 100,
       classMix: [],
     },
     history: [
@@ -242,6 +269,9 @@ export const members: Member[] = [
       noShows: 0,
       cancellationRate: "0%",
       avgHoldBeforeCancel: "N/A",
+      preCutoffCancels: 0,
+      postCutoffCancels: 0,
+      behaviourScore: 100,
       classMix: [],
     },
     history: [
@@ -261,6 +291,9 @@ export const members: Member[] = [
       noShows: 0,
       cancellationRate: "0%",
       avgHoldBeforeCancel: "N/A",
+      preCutoffCancels: 0,
+      postCutoffCancels: 0,
+      behaviourScore: 100,
       classMix: [
         { label: "Yoga Flow", count: 1 },
         { label: "Barre Tone", count: 1 },
