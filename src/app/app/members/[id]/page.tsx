@@ -132,19 +132,34 @@ const eventLabel: Record<string, string> = {
   started: "Started",
 };
 
+// --- Purchase Status Badge ---
+
+function statusBadgeStyle(status: string): string {
+  switch (status) {
+    case "Active": return "text-green-400 border-green-400/30";
+    case "Consumed": return "text-white/40 border-white/10";
+    case "Expired": return "text-red-400/60 border-red-400/20";
+    default: return "text-white/30 border-white/10";
+  }
+}
+
 // --- Purchase Card ---
 
-function PurchaseCard({ entry, label }: { entry: PurchaseEntry; label: string }) {
+function PurchaseCard({ entry }: { entry: PurchaseEntry }) {
+  const status = entry.purchaseStatus;
+  const isActive = status === "Active";
+  const isMuted = !isActive;
+
   if (entry.type === "credit_pack") {
     const pct = Math.round((entry.creditsUsed / entry.totalCredits) * 100);
     const pattern = usagePattern(entry.usageLog);
     const velocity = usageVelocity(entry);
     return (
-      <div className="rounded border border-white/10 px-4 py-3">
+      <div className={`rounded border px-4 py-3 ${isMuted ? "border-white/5" : "border-white/10"}`}>
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">{entry.product}</span>
-          <span className={`text-xs ${label === "Active" ? "text-green-400" : "text-white/30"}`}>
-            {label}
+          <span className={`text-sm font-medium ${isMuted ? "text-white/50" : ""}`}>{entry.product}</span>
+          <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadgeStyle(status)}`}>
+            {status}
           </span>
         </div>
         <span className="text-xs text-white/30">Purchased {entry.purchaseDate}</span>
@@ -199,11 +214,11 @@ function PurchaseCard({ entry, label }: { entry: PurchaseEntry; label: string })
 
   if (entry.type === "unlimited") {
     return (
-      <div className="rounded border border-white/10 px-4 py-3">
+      <div className={`rounded border px-4 py-3 ${isMuted ? "border-white/5" : "border-white/10"}`}>
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">{entry.product}</span>
-          <span className={`text-xs ${label === "Active" ? "text-green-400" : "text-white/30"}`}>
-            {label}
+          <span className={`text-sm font-medium ${isMuted ? "text-white/50" : ""}`}>{entry.product}</span>
+          <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadgeStyle(status)}`}>
+            {status}
           </span>
         </div>
         <span className="text-xs text-white/30">Started {entry.startDate}</span>
@@ -217,11 +232,11 @@ function PurchaseCard({ entry, label }: { entry: PurchaseEntry; label: string })
 
   // simple
   return (
-    <div className="rounded border border-white/10 px-4 py-3">
+    <div className={`rounded border px-4 py-3 ${isMuted ? "border-white/5" : "border-white/10"}`}>
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium">{entry.product}</span>
-        <span className={`text-xs ${label === "Active" ? "text-green-400" : "text-white/30"}`}>
-          {label}
+        <span className={`text-sm font-medium ${isMuted ? "text-white/50" : ""}`}>{entry.product}</span>
+        <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadgeStyle(status)}`}>
+          {status}
         </span>
       </div>
       <span className="text-xs text-white/30">Purchased {entry.purchaseDate}</span>
@@ -377,9 +392,9 @@ export default async function MemberDetailPage({
         </div>
 
         <div className="flex flex-col gap-4">
-          <PurchaseCard entry={pi.activePlan} label="Active" />
+          <PurchaseCard entry={pi.activePlan} />
           {pi.previousPurchases.map((p, i) => (
-            <PurchaseCard key={i} entry={p} label="Previous" />
+            <PurchaseCard key={i} entry={p} />
           ))}
         </div>
       </div>

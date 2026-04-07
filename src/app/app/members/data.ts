@@ -27,6 +27,8 @@ export type CreditUsageEntry = {
   date: string;
 };
 
+export type PurchaseStatus = "Active" | "Previous" | "Consumed" | "Expired";
+
 export type CreditPackPurchase = {
   type: "credit_pack";
   product: string;
@@ -35,6 +37,7 @@ export type CreditPackPurchase = {
   creditsUsed: number;
   creditsRemaining: number;
   lastUsedDate: string | null;
+  purchaseStatus: PurchaseStatus;
   usageLog: CreditUsageEntry[];
 };
 
@@ -43,12 +46,14 @@ export type UnlimitedPurchase = {
   product: string;
   startDate: string;
   classesAttendedSinceStart: number;
+  purchaseStatus: PurchaseStatus;
 };
 
 export type SimplePurchase = {
   type: "simple";
   product: string;
   purchaseDate: string;
+  purchaseStatus: PurchaseStatus;
 };
 
 export type PurchaseEntry = CreditPackPurchase | UnlimitedPurchase | SimplePurchase;
@@ -99,6 +104,7 @@ export const members: Member[] = [
         product: "Unlimited Monthly",
         startDate: "1 Apr",
         classesAttendedSinceStart: 2,
+        purchaseStatus: "Active",
       },
       previousPurchases: [
         {
@@ -109,6 +115,7 @@ export const members: Member[] = [
           creditsUsed: 10,
           creditsRemaining: 0,
           lastUsedDate: "31 Mar",
+          purchaseStatus: "Consumed",
           usageLog: [
             { className: "Spin Express", date: "10 Mar" },
             { className: "Barre Tone", date: "31 Mar" },
@@ -160,6 +167,7 @@ export const members: Member[] = [
         creditsUsed: 3,
         creditsRemaining: 7,
         lastUsedDate: "7 Apr",
+        purchaseStatus: "Active",
         usageLog: [
           { className: "Spin Express", date: "1 Apr" },
           { className: "Yoga Flow", date: "4 Apr" },
@@ -203,6 +211,7 @@ export const members: Member[] = [
         product: "Unlimited Monthly",
         startDate: "1 Apr",
         classesAttendedSinceStart: 2,
+        purchaseStatus: "Active",
       },
       previousPurchases: [],
       buyerPattern: "New unlimited member",
@@ -244,6 +253,7 @@ export const members: Member[] = [
         creditsUsed: 4,
         creditsRemaining: 1,
         lastUsedDate: "2 Apr",
+        purchaseStatus: "Active",
         usageLog: [
           { className: "Reformer Pilates", date: "24 Mar" },
           { className: "Yoga Flow", date: "28 Mar" },
@@ -292,6 +302,7 @@ export const members: Member[] = [
         creditsUsed: 6,
         creditsRemaining: 4,
         lastUsedDate: "31 Mar",
+        purchaseStatus: "Active",
         usageLog: [
           { className: "HIIT Circuit", date: "17 Mar" },
           { className: "Spin Express", date: "20 Mar" },
@@ -339,6 +350,7 @@ export const members: Member[] = [
         product: "Unlimited Monthly",
         startDate: "1 Apr",
         classesAttendedSinceStart: 1,
+        purchaseStatus: "Active",
       },
       previousPurchases: [],
       buyerPattern: "New unlimited member",
@@ -381,6 +393,7 @@ export const members: Member[] = [
         creditsUsed: 5,
         creditsRemaining: 0,
         lastUsedDate: "7 Apr",
+        purchaseStatus: "Consumed",
         usageLog: [
           { className: "Spin Express", date: "24 Mar" },
           { className: "Barre Tone", date: "27 Mar" },
@@ -424,6 +437,7 @@ export const members: Member[] = [
         type: "simple",
         product: "Drop-in Trial",
         purchaseDate: "6 Apr",
+        purchaseStatus: "Active",
       },
       previousPurchases: [],
       buyerPattern: "Occasional drop-in buyer",
@@ -459,6 +473,7 @@ export const members: Member[] = [
         creditsUsed: 0,
         creditsRemaining: 10,
         lastUsedDate: null,
+        purchaseStatus: "Active",
         usageLog: [],
       },
       previousPurchases: [],
@@ -499,6 +514,7 @@ export const members: Member[] = [
         creditsUsed: 2,
         creditsRemaining: 3,
         lastUsedDate: "1 Apr",
+        purchaseStatus: "Active",
         usageLog: [
           { className: "Barre Tone", date: "31 Mar" },
           { className: "Yoga Flow", date: "1 Apr" },
