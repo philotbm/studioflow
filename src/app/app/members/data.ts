@@ -4,12 +4,27 @@ export type HistoryEvent = {
   type: "attended" | "late_cancel" | "no_show" | "purchase" | "started" | "upcoming";
 };
 
+export type ClassMixEntry = {
+  label: string;
+  count: number;
+};
+
+export type MemberInsights = {
+  totalAttended: number;
+  lateCancels: number;
+  noShows: number;
+  cancellationRate: string;
+  avgHoldBeforeCancel: string;
+  classMix: ClassMixEntry[];
+};
+
 export type Member = {
   id: string;
   name: string;
   plan: string;
   credits: number | null;
   status: "active" | "expiring" | "expired";
+  insights: MemberInsights;
   history: HistoryEvent[];
 };
 
@@ -20,6 +35,18 @@ export const members: Member[] = [
     plan: "Unlimited Monthly",
     credits: null,
     status: "active",
+    insights: {
+      totalAttended: 4,
+      lateCancels: 1,
+      noShows: 1,
+      cancellationRate: "17%",
+      avgHoldBeforeCancel: "4 hours",
+      classMix: [
+        { label: "Reformer Pilates", count: 2 },
+        { label: "Yoga Flow", count: 1 },
+        { label: "Barre Tone", count: 1 },
+      ],
+    },
     history: [
       { date: "10 Apr", event: "Reformer Pilates — Thu 09:00", type: "upcoming" },
       { date: "7 Apr", event: "Reformer Pilates — Mon 09:00", type: "attended" },
@@ -38,6 +65,18 @@ export const members: Member[] = [
     plan: "10-Class Pass",
     credits: 7,
     status: "active",
+    insights: {
+      totalAttended: 3,
+      lateCancels: 0,
+      noShows: 0,
+      cancellationRate: "0%",
+      avgHoldBeforeCancel: "N/A",
+      classMix: [
+        { label: "Reformer Pilates", count: 1 },
+        { label: "Yoga Flow", count: 1 },
+        { label: "Spin Express", count: 1 },
+      ],
+    },
     history: [
       { date: "7 Apr", event: "Reformer Pilates — Mon 09:00", type: "attended" },
       { date: "4 Apr", event: "Yoga Flow — Fri 07:00", type: "attended" },
@@ -51,6 +90,17 @@ export const members: Member[] = [
     plan: "Unlimited Monthly",
     credits: null,
     status: "active",
+    insights: {
+      totalAttended: 2,
+      lateCancels: 0,
+      noShows: 0,
+      cancellationRate: "0%",
+      avgHoldBeforeCancel: "N/A",
+      classMix: [
+        { label: "Spin Express", count: 1 },
+        { label: "HIIT Circuit", count: 1 },
+      ],
+    },
     history: [
       { date: "7 Apr", event: "Spin Express — Mon 12:30", type: "attended" },
       { date: "3 Apr", event: "HIIT Circuit — Thu 18:00", type: "attended" },
@@ -63,6 +113,18 @@ export const members: Member[] = [
     plan: "5-Class Pass",
     credits: 1,
     status: "expiring",
+    insights: {
+      totalAttended: 3,
+      lateCancels: 1,
+      noShows: 0,
+      cancellationRate: "25%",
+      avgHoldBeforeCancel: "2 hours",
+      classMix: [
+        { label: "Yoga Flow", count: 1 },
+        { label: "Barre Tone", count: 1 },
+        { label: "Reformer Pilates", count: 1 },
+      ],
+    },
     history: [
       { date: "8 Apr", event: "Yoga Flow — Tue 07:00", type: "upcoming" },
       { date: "2 Apr", event: "Barre Tone — Wed 10:00", type: "attended" },
@@ -78,6 +140,17 @@ export const members: Member[] = [
     plan: "10-Class Pass",
     credits: 4,
     status: "active",
+    insights: {
+      totalAttended: 4,
+      lateCancels: 1,
+      noShows: 1,
+      cancellationRate: "17%",
+      avgHoldBeforeCancel: "6 hours",
+      classMix: [
+        { label: "HIIT Circuit", count: 2 },
+        { label: "Spin Express", count: 2 },
+      ],
+    },
     history: [
       { date: "8 Apr", event: "HIIT Circuit — Tue 18:00", type: "upcoming" },
       { date: "4 Apr", event: "Spin Express — Fri 12:30", type: "late_cancel" },
@@ -95,6 +168,16 @@ export const members: Member[] = [
     plan: "Unlimited Monthly",
     credits: null,
     status: "active",
+    insights: {
+      totalAttended: 1,
+      lateCancels: 0,
+      noShows: 0,
+      cancellationRate: "0%",
+      avgHoldBeforeCancel: "N/A",
+      classMix: [
+        { label: "Barre Tone", count: 1 },
+      ],
+    },
     history: [
       { date: "9 Apr", event: "Barre Tone — Wed 10:00", type: "upcoming" },
       { date: "2 Apr", event: "Barre Tone — Wed 10:00", type: "attended" },
@@ -107,6 +190,19 @@ export const members: Member[] = [
     plan: "5-Class Pass",
     credits: 0,
     status: "expired",
+    insights: {
+      totalAttended: 5,
+      lateCancels: 0,
+      noShows: 0,
+      cancellationRate: "0%",
+      avgHoldBeforeCancel: "N/A",
+      classMix: [
+        { label: "Spin Express", count: 2 },
+        { label: "Yoga Flow", count: 1 },
+        { label: "HIIT Circuit", count: 1 },
+        { label: "Barre Tone", count: 1 },
+      ],
+    },
     history: [
       { date: "7 Apr", event: "Spin Express — Mon 12:30", type: "attended" },
       { date: "3 Apr", event: "Yoga Flow — Thu 07:00", type: "attended" },
@@ -122,6 +218,14 @@ export const members: Member[] = [
     plan: "Drop-in Trial",
     credits: 1,
     status: "active",
+    insights: {
+      totalAttended: 0,
+      lateCancels: 0,
+      noShows: 0,
+      cancellationRate: "0%",
+      avgHoldBeforeCancel: "N/A",
+      classMix: [],
+    },
     history: [
       { date: "6 Apr", event: "Trial pass activated", type: "purchase" },
     ],
@@ -132,6 +236,14 @@ export const members: Member[] = [
     plan: "10-Class Pass",
     credits: 10,
     status: "active",
+    insights: {
+      totalAttended: 0,
+      lateCancels: 0,
+      noShows: 0,
+      cancellationRate: "0%",
+      avgHoldBeforeCancel: "N/A",
+      classMix: [],
+    },
     history: [
       { date: "8 Apr", event: "HIIT Circuit — Tue 18:00", type: "upcoming" },
       { date: "5 Apr", event: "Purchased 10-Class Pass", type: "purchase" },
@@ -143,6 +255,17 @@ export const members: Member[] = [
     plan: "5-Class Pass",
     credits: 3,
     status: "active",
+    insights: {
+      totalAttended: 2,
+      lateCancels: 0,
+      noShows: 0,
+      cancellationRate: "0%",
+      avgHoldBeforeCancel: "N/A",
+      classMix: [
+        { label: "Yoga Flow", count: 1 },
+        { label: "Barre Tone", count: 1 },
+      ],
+    },
     history: [
       { date: "1 Apr", event: "Yoga Flow — Tue 07:00", type: "attended" },
       { date: "31 Mar", event: "Barre Tone — Mon 10:00", type: "attended" },

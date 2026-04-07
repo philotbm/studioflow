@@ -62,6 +62,53 @@ export default async function MemberDetailPage({
         </div>
       </div>
 
+      {/* Insights */}
+      <div className="mt-8">
+        <h2 className="text-sm font-medium text-white/70">Insights</h2>
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="rounded border border-white/10 px-3 py-2">
+            <span className="text-xs text-white/40">Attended</span>
+            <p className="text-lg font-semibold">{member.insights.totalAttended}</p>
+          </div>
+          <div className="rounded border border-white/10 px-3 py-2">
+            <span className="text-xs text-white/40">Late cancels</span>
+            <p className={`text-lg font-semibold ${member.insights.lateCancels > 0 ? "text-red-400" : ""}`}>
+              {member.insights.lateCancels}
+            </p>
+          </div>
+          <div className="rounded border border-white/10 px-3 py-2">
+            <span className="text-xs text-white/40">No-shows</span>
+            <p className={`text-lg font-semibold ${member.insights.noShows > 0 ? "text-red-400" : ""}`}>
+              {member.insights.noShows}
+            </p>
+          </div>
+          <div className="rounded border border-white/10 px-3 py-2">
+            <span className="text-xs text-white/40">Cancel rate</span>
+            <p className="text-lg font-semibold">{member.insights.cancellationRate}</p>
+          </div>
+          <div className="rounded border border-white/10 px-3 py-2 col-span-2 sm:col-span-1">
+            <span className="text-xs text-white/40">Avg hold before cancel</span>
+            <p className="text-lg font-semibold">{member.insights.avgHoldBeforeCancel}</p>
+          </div>
+        </div>
+
+        {member.insights.classMix.length > 0 && (
+          <div className="mt-4">
+            <span className="text-xs text-white/40">Class mix</span>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              {member.insights.classMix.map((c) => (
+                <span
+                  key={c.label}
+                  className="rounded-full border border-white/10 px-2.5 py-0.5 text-xs text-white/60"
+                >
+                  {c.label} <span className="text-white/30">&times;{c.count}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
       {member.history.length > 0 && (
         <div className="mt-8">
           <h2 className="text-sm font-medium text-white/70">History</h2>
