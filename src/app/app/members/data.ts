@@ -64,6 +64,12 @@ export type PurchaseInsights = {
   buyerPattern: string;
 };
 
+export type OpportunitySignal = {
+  label: string;
+  detail: string;
+  tone: "positive" | "neutral" | "attention";
+};
+
 export type Member = {
   id: string;
   name: string;
@@ -72,6 +78,7 @@ export type Member = {
   status: "active" | "expiring" | "expired";
   insights: MemberInsights;
   purchaseInsights: PurchaseInsights;
+  opportunitySignals: OpportunitySignal[];
   history: HistoryEvent[];
 };
 
@@ -124,6 +131,10 @@ export const members: Member[] = [
       ],
       buyerPattern: "Moved from packs to unlimited",
     },
+    opportunitySignals: [
+      { label: "Upgrade success", detail: "Converted from class pack to unlimited — retain with good experience", tone: "positive" },
+      { label: "Needs attention", detail: "No-show and late cancel history — monitor for churn risk", tone: "attention" },
+    ],
     history: [
       { date: "10 Apr", event: "Reformer Pilates — Thu 09:00", type: "upcoming" },
       { date: "7 Apr", event: "Reformer Pilates — Mon 09:00", type: "attended" },
@@ -177,6 +188,10 @@ export const members: Member[] = [
       previousPurchases: [],
       buyerPattern: "First-time class pack buyer",
     },
+    opportunitySignals: [
+      { label: "Reliable regular", detail: "Strong attendance, zero cancellations — ideal member", tone: "positive" },
+      { label: "Upgrade candidate", detail: "High usage rate on class pack — may benefit from unlimited", tone: "positive" },
+    ],
     history: [
       { date: "7 Apr", event: "Reformer Pilates — Mon 09:00", type: "attended" },
       { date: "4 Apr", event: "Yoga Flow — Fri 07:00", type: "attended" },
@@ -216,6 +231,9 @@ export const members: Member[] = [
       previousPurchases: [],
       buyerPattern: "New unlimited member",
     },
+    opportunitySignals: [
+      { label: "Under-using unlimited", detail: "Only 2 classes since starting unlimited — encourage more bookings", tone: "attention" },
+    ],
     history: [
       { date: "7 Apr", event: "Spin Express — Mon 12:30", type: "attended" },
       { date: "3 Apr", event: "HIIT Circuit — Thu 18:00", type: "attended" },
@@ -263,6 +281,10 @@ export const members: Member[] = [
       previousPurchases: [],
       buyerPattern: "First-time class pack buyer",
     },
+    opportunitySignals: [
+      { label: "Likely to repurchase", detail: "Down to 1 credit — prompt with renewal offer", tone: "positive" },
+      { label: "At risk of churn", detail: "Late cancel history and low remaining credits", tone: "attention" },
+    ],
     history: [
       { date: "8 Apr", event: "Yoga Flow — Tue 07:00", type: "upcoming" },
       { date: "2 Apr", event: "Barre Tone — Wed 10:00", type: "attended" },
@@ -313,6 +335,10 @@ export const members: Member[] = [
       previousPurchases: [],
       buyerPattern: "Usually buys class packs",
     },
+    opportunitySignals: [
+      { label: "At risk of churn", detail: "No-show + late cancel pattern — may disengage if not addressed", tone: "attention" },
+      { label: "Needs attention", detail: "Holds spots for long periods then cancels — impacts class availability", tone: "attention" },
+    ],
     history: [
       { date: "8 Apr", event: "HIIT Circuit — Tue 18:00", type: "upcoming" },
       { date: "4 Apr", event: "Spin Express — Fri 12:30", type: "late_cancel" },
@@ -355,6 +381,9 @@ export const members: Member[] = [
       previousPurchases: [],
       buyerPattern: "New unlimited member",
     },
+    opportunitySignals: [
+      { label: "Under-using unlimited", detail: "Only 1 class since starting unlimited — encourage variety", tone: "attention" },
+    ],
     history: [
       { date: "9 Apr", event: "Barre Tone — Wed 10:00", type: "upcoming" },
       { date: "2 Apr", event: "Barre Tone — Wed 10:00", type: "attended" },
@@ -405,6 +434,10 @@ export const members: Member[] = [
       previousPurchases: [],
       buyerPattern: "Reliable pack user — may repurchase",
     },
+    opportunitySignals: [
+      { label: "Likely to repurchase", detail: "Used all 5 credits with perfect attendance — ready for another pack", tone: "positive" },
+      { label: "Upgrade candidate", detail: "High class frequency suggests unlimited would suit better", tone: "positive" },
+    ],
     history: [
       { date: "7 Apr", event: "Spin Express — Mon 12:30", type: "attended" },
       { date: "3 Apr", event: "Yoga Flow — Thu 07:00", type: "attended" },
@@ -442,6 +475,9 @@ export const members: Member[] = [
       previousPurchases: [],
       buyerPattern: "Occasional drop-in buyer",
     },
+    opportunitySignals: [
+      { label: "Conversion opportunity", detail: "Trial activated but no classes yet — follow up to encourage first booking", tone: "neutral" },
+    ],
     history: [
       { date: "6 Apr", event: "Trial pass activated", type: "purchase" },
     ],
@@ -479,6 +515,9 @@ export const members: Member[] = [
       previousPurchases: [],
       buyerPattern: "New class pack buyer",
     },
+    opportunitySignals: [
+      { label: "New member", detail: "Recently purchased first pack — ensure a great first class experience", tone: "neutral" },
+    ],
     history: [
       { date: "8 Apr", event: "HIIT Circuit — Tue 18:00", type: "upcoming" },
       { date: "5 Apr", event: "Purchased 10-Class Pass", type: "purchase" },
@@ -523,6 +562,9 @@ export const members: Member[] = [
       previousPurchases: [],
       buyerPattern: "First-time class pack buyer",
     },
+    opportunitySignals: [
+      { label: "Reliable regular", detail: "Perfect attendance on first pack — good retention candidate", tone: "positive" },
+    ],
     history: [
       { date: "1 Apr", event: "Yoga Flow — Tue 07:00", type: "attended" },
       { date: "31 Mar", event: "Barre Tone — Mon 10:00", type: "attended" },

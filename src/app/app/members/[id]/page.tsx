@@ -292,6 +292,40 @@ export default async function MemberDetailPage({
         </dl>
       </div>
 
+      {/* Opportunity signals */}
+      {member.opportunitySignals.length > 0 && (
+        <div className="mt-6">
+          <h2 className="text-sm font-medium text-white/70">Opportunity signals</h2>
+          <div className="mt-3 flex flex-col gap-2">
+            {member.opportunitySignals.map((s, i) => (
+              <div
+                key={i}
+                className={`rounded border px-4 py-2.5 ${
+                  s.tone === "positive"
+                    ? "border-green-400/20"
+                    : s.tone === "attention"
+                      ? "border-amber-400/20"
+                      : "border-white/10"
+                }`}
+              >
+                <span
+                  className={`text-sm font-medium ${
+                    s.tone === "positive"
+                      ? "text-green-400"
+                      : s.tone === "attention"
+                        ? "text-amber-400"
+                        : "text-white/60"
+                  }`}
+                >
+                  {s.label}
+                </span>
+                <p className="mt-0.5 text-xs text-white/40">{s.detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Insights */}
       <div className="mt-8">
         <h2 className="text-sm font-medium text-white/70">Insights</h2>
