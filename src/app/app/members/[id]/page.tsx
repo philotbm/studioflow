@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { members, type Member } from "../data";
+import { members, type Member, type PurchaseEntry } from "../data";
 
 function statusLine(member: Member): { label: string; style: string } {
   if (member.credits === null) {
@@ -38,6 +38,93 @@ const eventLabel: Record<string, string> = {
   purchase: "Purchase",
   started: "Started",
 };
+
+function PurchaseCard({ entry, label }: { entry: PurchaseEntry; label: string }) {
+  if (entry.type === "credit_pack") {
+    const pct = Math.round((entry.creditsUsed / entry.totalCredits) * 100);
+    return (
+      <div className="rounded border border-white/10 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">{entry.product}</span>
+          <span className={`text-xs ${label === "Active" ? "text-green-400" : "text-white/30"}`}>
+            {label}
+          </span>
+        </div>
+        <span className="text-xs text-white/30">Purchased {entry.purchaseDate}</span>
+
+        <div className="mt-3 grid grid-cols-3 gap-3">
+          <div>
+            <span className="text-xs text-white/40">Used</span>
+            <p className="text-sm font-semibold">{entry.creditsUsed}/{entry.totalCredits}</p>
+          </div>
+          <div>
+            <span className="text-xs text-white/40">Remaining</span>
+            <p className={`text-sm font-semibold ${entry.creditsRemaining === 0 ? "text-white/30" : entry.creditsRemaining <= 1 ? "text-amber-400" : ""}`}>
+              {entry.creditsRemaining}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs text-white/40">Last used</span>
+            <p className="text-sm font-semibold">{entry.lastUsedDate ?? "—"}</p>
+          </div>
+        </div>
+
+        {/* Usage bar */}
+        <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
+          <div
+            className="h-1.5 rounded-full bg-white/30"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+
+        {entry.usageLog.length > 0 && (
+          <div className="mt-3">
+            <span className="text-xs text-white/30">Classes used</span>
+            <ul className="mt-1 flex flex-col gap-1">
+              {entry.usageLog.map((u, i) => (
+                <li key={i} className="flex items-center justify-between text-xs">
+                  <span className="text-white/50">{u.className}</span>
+                  <span className="text-white/25">{u.date}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (entry.type === "unlimited") {
+    return (
+      <div className="rounded border border-white/10 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">{entry.product}</span>
+          <span className={`text-xs ${label === "Active" ? "text-green-400" : "text-white/30"}`}>
+            {label}
+          </span>
+        </div>
+        <span className="text-xs text-white/30">Started {entry.startDate}</span>
+        <div className="mt-3">
+          <span className="text-xs text-white/40">Classes since start</span>
+          <p className="text-sm font-semibold">{entry.classesAttendedSinceStart}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // simple
+  return (
+    <div className="rounded border border-white/10 px-4 py-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium">{entry.product}</span>
+        <span className={`text-xs ${label === "Active" ? "text-green-400" : "text-white/30"}`}>
+          {label}
+        </span>
+      </div>
+      <span className="text-xs text-white/30">Purchased {entry.purchaseDate}</span>
+    </div>
+  );
+}
 
 export function generateStaticParams() {
   return members.map((m) => ({ id: m.id }));
@@ -150,32 +237,16 @@ export default async function MemberDetailPage({
       {/* Purchase Insights */}
       <div className="mt-8">
         <h2 className="text-sm font-medium text-white/70">Purchase insights</h2>
-        <dl className="mt-3 flex flex-col gap-2 text-sm">
-          <div className="flex gap-2">
-            <dt className="text-white/40">Active plan</dt>
-            <dd className="text-white/80">{pi.activePlan}</dd>
-          </div>
-          <div className="flex gap-2">
-            <dt className="text-white/40">Buyer pattern</dt>
-            <dd className="text-white/60">{pi.buyerPattern}</dd>
-          </div>
-        </dl>
-        {pi.previousPurchases.length > 0 && (
-          <div className="mt-3">
-            <span className="text-xs text-white/40">Previous purchases</span>
-            <ul className="mt-1.5 flex flex-col gap-1.5">
-              {pi.previousPurchases.map((p, i) => (
-                <li
-                  key={i}
-                  className="flex items-center justify-between rounded border border-white/10 px-3 py-1.5"
-                >
-                  <span className="text-sm text-white/70">{p.item}</span>
-                  <span className="text-xs text-white/30">{p.date}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <div className="mt-2 mb-3 text-xs text-white/40">
+          Buyer pattern: <span className="text-white/60">{pi.buyerPattern}</span>
+        </div>
+
+        <div className="flex flex-col gap-4">
+          <PurchaseCard entry={pi.activePlan} label="Active" />
+          {pi.previousPurchases.map((p, i) => (
+            <PurchaseCard key={i} entry={p} label="Previous" />
+          ))}
+        </div>
       </div>
 
       {/* History */}

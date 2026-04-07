@@ -22,14 +22,40 @@ export type MemberInsights = {
   classMix: ClassMixEntry[];
 };
 
-export type PurchaseRecord = {
-  item: string;
+export type CreditUsageEntry = {
+  className: string;
   date: string;
 };
 
+export type CreditPackPurchase = {
+  type: "credit_pack";
+  product: string;
+  purchaseDate: string;
+  totalCredits: number;
+  creditsUsed: number;
+  creditsRemaining: number;
+  lastUsedDate: string | null;
+  usageLog: CreditUsageEntry[];
+};
+
+export type UnlimitedPurchase = {
+  type: "unlimited";
+  product: string;
+  startDate: string;
+  classesAttendedSinceStart: number;
+};
+
+export type SimplePurchase = {
+  type: "simple";
+  product: string;
+  purchaseDate: string;
+};
+
+export type PurchaseEntry = CreditPackPurchase | UnlimitedPurchase | SimplePurchase;
+
 export type PurchaseInsights = {
-  activePlan: string;
-  previousPurchases: PurchaseRecord[];
+  activePlan: PurchaseEntry;
+  previousPurchases: PurchaseEntry[];
   buyerPattern: string;
 };
 
@@ -68,9 +94,26 @@ export const members: Member[] = [
       ],
     },
     purchaseInsights: {
-      activePlan: "Unlimited Monthly",
+      activePlan: {
+        type: "unlimited",
+        product: "Unlimited Monthly",
+        startDate: "1 Apr",
+        classesAttendedSinceStart: 2,
+      },
       previousPurchases: [
-        { item: "10-Class Pass", date: "15 Mar" },
+        {
+          type: "credit_pack",
+          product: "10-Class Pass",
+          purchaseDate: "15 Mar",
+          totalCredits: 10,
+          creditsUsed: 10,
+          creditsRemaining: 0,
+          lastUsedDate: "31 Mar",
+          usageLog: [
+            { className: "Spin Express", date: "10 Mar" },
+            { className: "Barre Tone", date: "31 Mar" },
+          ],
+        },
       ],
       buyerPattern: "Moved from packs to unlimited",
     },
@@ -109,7 +152,20 @@ export const members: Member[] = [
       ],
     },
     purchaseInsights: {
-      activePlan: "10-Class Pass",
+      activePlan: {
+        type: "credit_pack",
+        product: "10-Class Pass",
+        purchaseDate: "25 Mar",
+        totalCredits: 10,
+        creditsUsed: 3,
+        creditsRemaining: 7,
+        lastUsedDate: "7 Apr",
+        usageLog: [
+          { className: "Spin Express", date: "1 Apr" },
+          { className: "Yoga Flow", date: "4 Apr" },
+          { className: "Reformer Pilates", date: "7 Apr" },
+        ],
+      },
       previousPurchases: [],
       buyerPattern: "First-time class pack buyer",
     },
@@ -142,7 +198,12 @@ export const members: Member[] = [
       ],
     },
     purchaseInsights: {
-      activePlan: "Unlimited Monthly",
+      activePlan: {
+        type: "unlimited",
+        product: "Unlimited Monthly",
+        startDate: "1 Apr",
+        classesAttendedSinceStart: 2,
+      },
       previousPurchases: [],
       buyerPattern: "New unlimited member",
     },
@@ -175,7 +236,20 @@ export const members: Member[] = [
       ],
     },
     purchaseInsights: {
-      activePlan: "5-Class Pass",
+      activePlan: {
+        type: "credit_pack",
+        product: "5-Class Pass",
+        purchaseDate: "15 Mar",
+        totalCredits: 5,
+        creditsUsed: 4,
+        creditsRemaining: 1,
+        lastUsedDate: "2 Apr",
+        usageLog: [
+          { className: "Reformer Pilates", date: "24 Mar" },
+          { className: "Yoga Flow", date: "28 Mar" },
+          { className: "Barre Tone", date: "2 Apr" },
+        ],
+      },
       previousPurchases: [],
       buyerPattern: "First-time class pack buyer",
     },
@@ -210,7 +284,21 @@ export const members: Member[] = [
       ],
     },
     purchaseInsights: {
-      activePlan: "10-Class Pass",
+      activePlan: {
+        type: "credit_pack",
+        product: "10-Class Pass",
+        purchaseDate: "10 Mar",
+        totalCredits: 10,
+        creditsUsed: 6,
+        creditsRemaining: 4,
+        lastUsedDate: "31 Mar",
+        usageLog: [
+          { className: "HIIT Circuit", date: "17 Mar" },
+          { className: "Spin Express", date: "20 Mar" },
+          { className: "Spin Express", date: "27 Mar" },
+          { className: "HIIT Circuit", date: "31 Mar" },
+        ],
+      },
       previousPurchases: [],
       buyerPattern: "Usually buys class packs",
     },
@@ -246,7 +334,12 @@ export const members: Member[] = [
       ],
     },
     purchaseInsights: {
-      activePlan: "Unlimited Monthly",
+      activePlan: {
+        type: "unlimited",
+        product: "Unlimited Monthly",
+        startDate: "1 Apr",
+        classesAttendedSinceStart: 1,
+      },
       previousPurchases: [],
       buyerPattern: "New unlimited member",
     },
@@ -280,7 +373,22 @@ export const members: Member[] = [
       ],
     },
     purchaseInsights: {
-      activePlan: "5-Class Pass (exhausted)",
+      activePlan: {
+        type: "credit_pack",
+        product: "5-Class Pass",
+        purchaseDate: "20 Mar",
+        totalCredits: 5,
+        creditsUsed: 5,
+        creditsRemaining: 0,
+        lastUsedDate: "7 Apr",
+        usageLog: [
+          { className: "Spin Express", date: "24 Mar" },
+          { className: "Barre Tone", date: "27 Mar" },
+          { className: "HIIT Circuit", date: "31 Mar" },
+          { className: "Yoga Flow", date: "3 Apr" },
+          { className: "Spin Express", date: "7 Apr" },
+        ],
+      },
       previousPurchases: [],
       buyerPattern: "Reliable pack user — may repurchase",
     },
@@ -312,7 +420,11 @@ export const members: Member[] = [
       classMix: [],
     },
     purchaseInsights: {
-      activePlan: "Drop-in Trial",
+      activePlan: {
+        type: "simple",
+        product: "Drop-in Trial",
+        purchaseDate: "6 Apr",
+      },
       previousPurchases: [],
       buyerPattern: "Occasional drop-in buyer",
     },
@@ -339,7 +451,16 @@ export const members: Member[] = [
       classMix: [],
     },
     purchaseInsights: {
-      activePlan: "10-Class Pass",
+      activePlan: {
+        type: "credit_pack",
+        product: "10-Class Pass",
+        purchaseDate: "5 Apr",
+        totalCredits: 10,
+        creditsUsed: 0,
+        creditsRemaining: 10,
+        lastUsedDate: null,
+        usageLog: [],
+      },
       previousPurchases: [],
       buyerPattern: "New class pack buyer",
     },
@@ -370,7 +491,19 @@ export const members: Member[] = [
       ],
     },
     purchaseInsights: {
-      activePlan: "5-Class Pass",
+      activePlan: {
+        type: "credit_pack",
+        product: "5-Class Pass",
+        purchaseDate: "25 Mar",
+        totalCredits: 5,
+        creditsUsed: 2,
+        creditsRemaining: 3,
+        lastUsedDate: "1 Apr",
+        usageLog: [
+          { className: "Barre Tone", date: "31 Mar" },
+          { className: "Yoga Flow", date: "1 Apr" },
+        ],
+      },
       previousPurchases: [],
       buyerPattern: "First-time class pack buyer",
     },
