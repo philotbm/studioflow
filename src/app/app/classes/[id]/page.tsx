@@ -6,12 +6,26 @@ const statusLabel: Record<string, string> = {
   booked: "Booked",
   attended: "Attended",
   late_cancel: "Late cancel",
+  no_show: "No show",
 };
 
 const statusColor: Record<string, string> = {
   booked: "text-white/50",
   attended: "text-green-400",
   late_cancel: "text-red-400",
+  no_show: "text-red-400",
+};
+
+const lifecycleLabel: Record<string, string> = {
+  upcoming: "Upcoming",
+  live: "Live",
+  completed: "Completed",
+};
+
+const lifecycleStyle: Record<string, string> = {
+  upcoming: "text-white/60 border-white/20",
+  live: "text-green-400 border-green-400/30",
+  completed: "text-white/40 border-white/10",
 };
 
 export function generateStaticParams() {
@@ -42,7 +56,17 @@ export default async function ClassDetailPage({
       </Link>
 
       <div className="mt-4">
-        <h1 className="text-2xl font-bold tracking-tight">{cls.name}</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight">{cls.name}</h1>
+          <span
+            className={`rounded-full border px-2.5 py-0.5 text-xs ${lifecycleStyle[cls.lifecycle]}`}
+          >
+            {cls.lifecycle === "live" && (
+              <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
+            )}
+            {lifecycleLabel[cls.lifecycle]}
+          </span>
+        </div>
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-white/50">
           <span>{cls.time}</span>
           <span>{cls.instructor}</span>
@@ -55,6 +79,20 @@ export default async function ClassDetailPage({
             </span>
           )}
         </div>
+        {cls.lifecycle === "upcoming" &&
+          cls.cancellationWindowClosed !== undefined && (
+            <p
+              className={`mt-2 text-xs ${
+                cls.cancellationWindowClosed
+                  ? "text-amber-400/80"
+                  : "text-white/40"
+              }`}
+            >
+              {cls.cancellationWindowClosed
+                ? "Late cancellation now applies"
+                : "Free cancellation open"}
+            </p>
+          )}
       </div>
 
       <div className="mt-8">

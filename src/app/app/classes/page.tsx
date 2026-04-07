@@ -7,6 +7,7 @@ const completed = upcomingClasses.filter((c) => c.lifecycle === "completed");
 
 function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
   const isFull = cls.booked >= cls.capacity;
+  const isUpcoming = cls.lifecycle === "upcoming";
   return (
     <li>
       <Link
@@ -24,6 +25,19 @@ function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
           <span className={`text-xs ${muted ? "text-white/30" : "text-white/50"}`}>
             {cls.time} &middot; {cls.instructor}
           </span>
+          {isUpcoming && cls.cancellationWindowClosed !== undefined && (
+            <span
+              className={`text-xs ${
+                cls.cancellationWindowClosed
+                  ? "text-amber-400/80"
+                  : "text-white/30"
+              }`}
+            >
+              {cls.cancellationWindowClosed
+                ? "Late cancellation now applies"
+                : "Free cancellation open"}
+            </span>
+          )}
         </div>
         <span
           className={`mt-1 text-xs sm:mt-0 ${

@@ -1,6 +1,6 @@
 export type Attendee = {
   name: string;
-  status: "booked" | "attended" | "late_cancel";
+  status: "booked" | "attended" | "late_cancel" | "no_show";
 };
 
 export type Lifecycle = "upcoming" | "live" | "completed";
@@ -14,10 +14,12 @@ export type StudioClass = {
   capacity: number;
   waitlistCount: number;
   lifecycle: Lifecycle;
+  cancellationWindowClosed?: boolean;
   attendees: Attendee[];
 };
 
 export const upcomingClasses: StudioClass[] = [
+  // --- Completed ---
   {
     id: "reformer-mon-9",
     name: "Reformer Pilates",
@@ -28,16 +30,17 @@ export const upcomingClasses: StudioClass[] = [
     waitlistCount: 0,
     lifecycle: "completed",
     attendees: [
-      { name: "Emma Kelly", status: "booked" },
+      { name: "Emma Kelly", status: "attended" },
       { name: "Ciara Byrne", status: "attended" },
-      { name: "Niamh Walsh", status: "booked" },
+      { name: "Niamh Walsh", status: "attended" },
       { name: "Orla Duffy", status: "attended" },
-      { name: "Sinead Murphy", status: "booked" },
+      { name: "Sinead Murphy", status: "no_show" },
       { name: "Roisin Daly", status: "late_cancel" },
-      { name: "Aisling Nolan", status: "booked" },
+      { name: "Aisling Nolan", status: "attended" },
       { name: "Maeve Ryan", status: "attended" },
     ],
   },
+  // --- Live ---
   {
     id: "spin-mon-1230",
     name: "Spin Express",
@@ -54,6 +57,7 @@ export const upcomingClasses: StudioClass[] = [
       { name: "Laura Keane", status: "booked" },
     ],
   },
+  // --- Completed ---
   {
     id: "yoga-tue-7",
     name: "Yoga Flow",
@@ -64,11 +68,12 @@ export const upcomingClasses: StudioClass[] = [
     waitlistCount: 0,
     lifecycle: "completed",
     attendees: [
-      { name: "Saoirse Flynn", status: "booked" },
+      { name: "Saoirse Flynn", status: "attended" },
       { name: "Grainne Doyle", status: "attended" },
-      { name: "Eimear Cahill", status: "booked" },
+      { name: "Eimear Cahill", status: "no_show" },
     ],
   },
+  // --- Upcoming (cancellation window closed — late cancel applies) ---
   {
     id: "hiit-tue-1800",
     name: "HIIT Circuit",
@@ -78,14 +83,16 @@ export const upcomingClasses: StudioClass[] = [
     capacity: 10,
     waitlistCount: 3,
     lifecycle: "upcoming",
+    cancellationWindowClosed: true,
     attendees: [
-      { name: "Sean Brennan", status: "attended" },
-      { name: "Padraig Roche", status: "attended" },
+      { name: "Sean Brennan", status: "booked" },
+      { name: "Padraig Roche", status: "booked" },
       { name: "Cian O'Neill", status: "booked" },
       { name: "Dara Fitzpatrick", status: "late_cancel" },
-      { name: "Eoin Gallagher", status: "attended" },
+      { name: "Eoin Gallagher", status: "booked" },
     ],
   },
+  // --- Upcoming (cancellation window still open) ---
   {
     id: "barre-wed-10",
     name: "Barre Tone",
@@ -95,12 +102,14 @@ export const upcomingClasses: StudioClass[] = [
     capacity: 8,
     waitlistCount: 0,
     lifecycle: "upcoming",
+    cancellationWindowClosed: false,
     attendees: [
       { name: "Clodagh Murray", status: "booked" },
       { name: "Aoibhinn Smyth", status: "booked" },
       { name: "Deirdre Whelan", status: "booked" },
     ],
   },
+  // --- Upcoming (cancellation window still open) ---
   {
     id: "reformer-thu-9",
     name: "Reformer Pilates",
@@ -110,9 +119,10 @@ export const upcomingClasses: StudioClass[] = [
     capacity: 12,
     waitlistCount: 0,
     lifecycle: "upcoming",
+    cancellationWindowClosed: false,
     attendees: [
       { name: "Emma Kelly", status: "booked" },
-      { name: "Niamh Walsh", status: "attended" },
+      { name: "Niamh Walsh", status: "booked" },
       { name: "Orla Duffy", status: "booked" },
     ],
   },
