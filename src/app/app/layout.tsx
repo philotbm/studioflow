@@ -1,8 +1,21 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+const navItems = [
+  { label: "Dashboard", href: "/app" },
+  { label: "Classes", href: "/app/classes" },
+  { label: "Members", href: "/app" },
+];
+
 export default function AppLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const pathname = usePathname();
+
   return (
     <div className="min-h-screen bg-black text-white">
       <header className="flex items-center justify-between border-b border-white/10 px-6 py-4">
@@ -10,9 +23,25 @@ export default function AppLayout({
           StudioFlow App
         </span>
         <nav className="flex gap-6">
-          <a href="/app" className="text-sm text-white/60 hover:text-white">Dashboard</a>
-          <a href="/app" className="text-sm text-white/60 hover:text-white">Classes</a>
-          <a href="/app" className="text-sm text-white/60 hover:text-white">Members</a>
+          {navItems.map((item) => {
+            const isActive =
+              item.href === "/app"
+                ? pathname === "/app"
+                : pathname.startsWith(item.href);
+            return (
+              <Link
+                key={item.label}
+                href={item.href}
+                className={`text-sm ${
+                  isActive
+                    ? "text-white font-medium"
+                    : "text-white/60 hover:text-white"
+                }`}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
         </nav>
       </header>
       <div className="px-6 py-8">{children}</div>
