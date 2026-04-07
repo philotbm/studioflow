@@ -34,7 +34,7 @@ function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
               }`}
             >
               {cls.cancellationWindowClosed
-                ? "Late cancellation now applies"
+                ? "Cancellation window closed"
                 : "Free cancellation open"}
             </span>
           )}

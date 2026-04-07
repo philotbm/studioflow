@@ -95,7 +95,7 @@ export default async function ClassDetailPage({
               }`}
             >
               {cls.cancellationWindowClosed
-                ? "Late cancellation now applies"
+                ? "Cancellation window closed"
                 : "Free cancellation open"}
             </p>
           )}
