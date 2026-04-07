@@ -5,6 +5,11 @@ export type Attendee = {
 
 export type Lifecycle = "upcoming" | "live" | "completed";
 
+export type WaitlistEntry = {
+  name: string;
+  position: number;
+};
+
 export type StudioClass = {
   id: string;
   name: string;
@@ -16,6 +21,7 @@ export type StudioClass = {
   lifecycle: Lifecycle;
   cancellationWindowClosed?: boolean;
   attendees: Attendee[];
+  waitlist?: WaitlistEntry[];
 };
 
 export const upcomingClasses: StudioClass[] = [
@@ -90,6 +96,11 @@ export const upcomingClasses: StudioClass[] = [
       { name: "Cian O'Neill", status: "booked" },
       { name: "Dara Fitzpatrick", status: "late_cancel" },
       { name: "Eoin Gallagher", status: "booked" },
+    ],
+    waitlist: [
+      { name: "Tara Lynch", position: 1 },
+      { name: "Ronan Kavanagh", position: 2 },
+      { name: "Ailbhe Connolly", position: 3 },
     ],
   },
   // --- Upcoming (cancellation window still open) ---

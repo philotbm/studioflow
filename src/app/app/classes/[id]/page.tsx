@@ -122,6 +122,30 @@ export default async function ClassDetailPage({
           </ul>
         )}
       </div>
+
+      {cls.waitlist && cls.waitlist.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-sm font-medium text-white/70">
+            Waitlist
+            <span className="ml-2 text-white/40">
+              {cls.waitlist.length}
+            </span>
+          </h2>
+          <ol className="mt-3 flex flex-col gap-2">
+            {cls.waitlist.map((entry) => (
+              <li
+                key={entry.position}
+                className="flex items-center justify-between rounded border border-white/10 px-4 py-2"
+              >
+                <span className="text-sm">{entry.name}</span>
+                <span className="text-xs text-white/30">
+                  #{entry.position}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
     </main>
   );
 }
