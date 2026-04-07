@@ -1,6 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { members, type Member, type PurchaseEntry } from "../data";
+import {
+  members,
+  type Member,
+  type MemberInsights,
+  type PurchaseEntry,
+  type CreditPackPurchase,
+} from "../data";
+
+// --- Helpers ---
 
 function statusLine(member: Member): { label: string; style: string } {
   if (member.credits === null) {
@@ -21,6 +29,91 @@ function behaviourColor(label: string): string {
   return "text-red-400";
 }
 
+function reliabilityReasons(ins: MemberInsights): string[] {
+  const reasons: string[] = [];
+  if (ins.noShows > 0) reasons.push("Misses booked classes");
+  if (ins.postCutoffCancels > 0) reasons.push("Cancels close to cutoff");
+  if (ins.avgHoldBeforeCancel !== "N/A") {
+    const hours = parseFloat(ins.avgHoldBeforeCancel);
+    if (!isNaN(hours) && hours >= 5) reasons.push("Holds spots for long periods");
+  }
+  if (ins.preCutoffCancels > 0 && reasons.length === 0)
+    reasons.push("Cancels before cutoff (low impact)");
+  return reasons;
+}
+
+function revenueImpact(ins: MemberInsights): {
+  spotHolding: string;
+  spotHoldingColor: string;
+  cancellationTiming: string;
+  overallImpact: string;
+  overallColor: string;
+} {
+  // Spot holding
+  let spotHolding = "Low";
+  let spotHoldingColor = "text-green-400";
+  if (ins.avgHoldBeforeCancel !== "N/A") {
+    const hours = parseFloat(ins.avgHoldBeforeCancel);
+    if (!isNaN(hours)) {
+      if (hours >= 5) {
+        spotHolding = "High";
+        spotHoldingColor = "text-red-400";
+      } else if (hours >= 3) {
+        spotHolding = "Medium";
+        spotHoldingColor = "text-amber-400";
+      }
+    }
+  }
+
+  // Cancellation timing
+  let cancellationTiming = "N/A";
+  const totalCancels = ins.preCutoffCancels + ins.postCutoffCancels;
+  if (totalCancels > 0) {
+    if (ins.preCutoffCancels > 0 && ins.postCutoffCancels === 0) {
+      cancellationTiming = "Early";
+    } else if (ins.postCutoffCancels > 0 && ins.preCutoffCancels === 0) {
+      cancellationTiming = "Late";
+    } else {
+      cancellationTiming = "Mixed";
+    }
+  }
+
+  // Overall impact
+  let overallImpact = "Positive";
+  let overallColor = "text-green-400";
+  if (ins.noShows > 0) {
+    overallImpact = "Negative";
+    overallColor = "text-red-400";
+  } else if (ins.postCutoffCancels > 0 || ins.behaviourScore < 70) {
+    overallImpact = "Neutral";
+    overallColor = "text-amber-400";
+  }
+
+  return { spotHolding, spotHoldingColor, cancellationTiming, overallImpact, overallColor };
+}
+
+function usagePattern(usageLog: { className: string }[]): { label: string; count: number }[] {
+  const counts: Record<string, number> = {};
+  for (const u of usageLog) {
+    counts[u.className] = (counts[u.className] || 0) + 1;
+  }
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([label, count]) => ({ label, count }));
+}
+
+function usageVelocity(entry: CreditPackPurchase): { label: string; color: string } {
+  if (entry.creditsUsed === 0) return { label: "Not started", color: "text-white/40" };
+  // Simple heuristic: ratio of credits used to total
+  const usedRatio = entry.creditsUsed / entry.totalCredits;
+  if (usedRatio >= 0.6) return { label: "Fast", color: "text-green-400" };
+  if (usedRatio >= 0.3) return { label: "On track", color: "text-white/60" };
+  return { label: "Slow", color: "text-amber-400" };
+}
+
+// --- Event display ---
+
 const eventColor: Record<string, string> = {
   upcoming: "text-white/60",
   attended: "text-green-400",
@@ -39,9 +132,13 @@ const eventLabel: Record<string, string> = {
   started: "Started",
 };
 
+// --- Purchase Card ---
+
 function PurchaseCard({ entry, label }: { entry: PurchaseEntry; label: string }) {
   if (entry.type === "credit_pack") {
     const pct = Math.round((entry.creditsUsed / entry.totalCredits) * 100);
+    const pattern = usagePattern(entry.usageLog);
+    const velocity = usageVelocity(entry);
     return (
       <div className="rounded border border-white/10 px-4 py-3">
         <div className="flex items-center justify-between">
@@ -52,7 +149,7 @@ function PurchaseCard({ entry, label }: { entry: PurchaseEntry; label: string })
         </div>
         <span className="text-xs text-white/30">Purchased {entry.purchaseDate}</span>
 
-        <div className="mt-3 grid grid-cols-3 gap-3">
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div>
             <span className="text-xs text-white/40">Used</span>
             <p className="text-sm font-semibold">{entry.creditsUsed}/{entry.totalCredits}</p>
@@ -67,6 +164,10 @@ function PurchaseCard({ entry, label }: { entry: PurchaseEntry; label: string })
             <span className="text-xs text-white/40">Last used</span>
             <p className="text-sm font-semibold">{entry.lastUsedDate ?? "—"}</p>
           </div>
+          <div>
+            <span className="text-xs text-white/40">Velocity</span>
+            <p className={`text-sm font-semibold ${velocity.color}`}>{velocity.label}</p>
+          </div>
         </div>
 
         {/* Usage bar */}
@@ -77,17 +178,19 @@ function PurchaseCard({ entry, label }: { entry: PurchaseEntry; label: string })
           />
         </div>
 
-        {entry.usageLog.length > 0 && (
+        {pattern.length > 0 && (
           <div className="mt-3">
-            <span className="text-xs text-white/30">Classes used</span>
-            <ul className="mt-1 flex flex-col gap-1">
-              {entry.usageLog.map((u, i) => (
-                <li key={i} className="flex items-center justify-between text-xs">
-                  <span className="text-white/50">{u.className}</span>
-                  <span className="text-white/25">{u.date}</span>
-                </li>
+            <span className="text-xs text-white/30">Usage pattern</span>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {pattern.map((p) => (
+                <span
+                  key={p.label}
+                  className="rounded-full border border-white/10 px-2 py-0.5 text-xs text-white/50"
+                >
+                  {p.label} ({p.count})
+                </span>
               ))}
-            </ul>
+            </div>
           </div>
         )}
       </div>
@@ -126,6 +229,8 @@ function PurchaseCard({ entry, label }: { entry: PurchaseEntry; label: string })
   );
 }
 
+// --- Page ---
+
 export function generateStaticParams() {
   return members.map((m) => ({ id: m.id }));
 }
@@ -145,6 +250,8 @@ export default async function MemberDetailPage({
   const status = statusLine(member);
   const ins = member.insights;
   const pi = member.purchaseInsights;
+  const reasons = reliabilityReasons(ins);
+  const impact = revenueImpact(ins);
 
   return (
     <main className="mx-auto max-w-2xl">
@@ -206,15 +313,43 @@ export default async function MemberDetailPage({
           </div>
         </div>
 
+        {/* Revenue Impact */}
+        <div className="mt-4 rounded border border-white/10 px-4 py-3">
+          <span className="text-xs text-white/40">Revenue impact</span>
+          <div className="mt-2 grid grid-cols-3 gap-3">
+            <div>
+              <span className="text-xs text-white/30">Spot holding</span>
+              <p className={`text-sm font-semibold ${impact.spotHoldingColor}`}>{impact.spotHolding}</p>
+            </div>
+            <div>
+              <span className="text-xs text-white/30">Cancel timing</span>
+              <p className="text-sm font-semibold text-white/60">{impact.cancellationTiming}</p>
+            </div>
+            <div>
+              <span className="text-xs text-white/30">Overall</span>
+              <p className={`text-sm font-semibold ${impact.overallColor}`}>{impact.overallImpact}</p>
+            </div>
+          </div>
+        </div>
+
         {/* Reliability */}
         <div className="mt-4 rounded border border-white/10 px-4 py-3">
           <span className="text-xs text-white/40">Reliability</span>
           <p className={`text-lg font-semibold ${behaviourColor(ins.behaviourLabel)}`}>
             {ins.behaviourLabel}
-            <span className="ml-2 text-sm font-normal text-white/30">
+            <span className="ml-2 text-xs font-normal text-white/20">
               {ins.behaviourScore}/100
             </span>
           </p>
+          {reasons.length > 0 && (
+            <ul className="mt-1.5 flex flex-col gap-0.5">
+              {reasons.map((r, i) => (
+                <li key={i} className="text-xs text-white/40">
+                  &bull; {r}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         {ins.classMix.length > 0 && (
