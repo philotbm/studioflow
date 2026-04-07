@@ -1,12 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { upcomingClasses } from "../data";
+import LiveAttendees from "./live-attendees";
 
 const statusLabel: Record<string, string> = {
   booked: "Booked",
   attended: "Attended",
   late_cancel: "Late cancel",
   no_show: "No show",
+  checked_in: "Checked in",
+  not_checked_in: "Not checked in",
 };
 
 const statusColor: Record<string, string> = {
@@ -14,6 +17,8 @@ const statusColor: Record<string, string> = {
   attended: "text-green-400",
   late_cancel: "text-red-400",
   no_show: "text-red-400",
+  checked_in: "text-green-400",
+  not_checked_in: "text-white/50",
 };
 
 const lifecycleLabel: Record<string, string> = {
@@ -45,6 +50,7 @@ export default async function ClassDetailPage({
   }
 
   const isFull = cls.booked >= cls.capacity;
+  const isLive = cls.lifecycle === "live";
 
   return (
     <main className="mx-auto max-w-2xl">
@@ -61,7 +67,7 @@ export default async function ClassDetailPage({
           <span
             className={`rounded-full border px-2.5 py-0.5 text-xs ${lifecycleStyle[cls.lifecycle]}`}
           >
-            {cls.lifecycle === "live" && (
+            {isLive && (
               <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
             )}
             {lifecycleLabel[cls.lifecycle]}
@@ -97,19 +103,24 @@ export default async function ClassDetailPage({
 
       <div className="mt-8">
         <h2 className="text-sm font-medium text-white/70">Attendees</h2>
-        <ul className="mt-3 flex flex-col gap-2">
-          {cls.attendees.map((a, i) => (
-            <li
-              key={i}
-              className="flex items-center justify-between rounded border border-white/10 px-4 py-2"
-            >
-              <span className="text-sm">{a.name}</span>
-              <span className={`text-xs ${statusColor[a.status]}`}>
-                {statusLabel[a.status]}
-              </span>
-            </li>
-          ))}
-        </ul>
+
+        {isLive ? (
+          <LiveAttendees initialAttendees={cls.attendees} />
+        ) : (
+          <ul className="mt-3 flex flex-col gap-2">
+            {cls.attendees.map((a, i) => (
+              <li
+                key={i}
+                className="flex items-center justify-between rounded border border-white/10 px-4 py-2"
+              >
+                <span className="text-sm">{a.name}</span>
+                <span className={`text-xs ${statusColor[a.status]}`}>
+                  {statusLabel[a.status]}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </main>
   );

@@ -1,6 +1,6 @@
 export type Attendee = {
   name: string;
-  status: "booked" | "attended" | "late_cancel" | "no_show";
+  status: "booked" | "attended" | "late_cancel" | "no_show" | "checked_in" | "not_checked_in";
 };
 
 export type Lifecycle = "upcoming" | "live" | "completed";
@@ -51,10 +51,10 @@ export const upcomingClasses: StudioClass[] = [
     waitlistCount: 0,
     lifecycle: "live",
     attendees: [
-      { name: "Declan Power", status: "attended" },
-      { name: "Fiona Healy", status: "booked" },
-      { name: "Conor Brady", status: "attended" },
-      { name: "Laura Keane", status: "booked" },
+      { name: "Declan Power", status: "checked_in" },
+      { name: "Fiona Healy", status: "not_checked_in" },
+      { name: "Conor Brady", status: "checked_in" },
+      { name: "Laura Keane", status: "not_checked_in" },
     ],
   },
   // --- Completed ---
