@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { upcomingClasses, type Attendee } from "../data";
+import { applyPromotionsToClass, readPromotions } from "../promotions";
 import LiveAttendees from "./live-attendees";
 import WaitlistSection from "./waitlist-section";
 
@@ -33,10 +34,6 @@ const lifecycleStyle: Record<string, string> = {
   live: "text-green-400 border-green-400/30",
   completed: "text-white/40 border-white/10",
 };
-
-export function generateStaticParams() {
-  return upcomingClasses.map((cls) => ({ id: cls.id }));
-}
 
 function AttendeeRow({ a }: { a: Attendee }) {
   const inner = (
@@ -74,13 +71,17 @@ export default async function ClassDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const cls = upcomingClasses.find((c) => c.id === id);
+  const sourceCls = upcomingClasses.find((c) => c.id === id);
 
-  if (!cls) {
+  if (!sourceCls) {
     notFound();
   }
 
-  // Visible roster drives the booked count so it matches what the user sees.
+  // Apply any cookie-backed promotions for this class so the rendered roster,
+  // waitlist, and booked count all reflect the persistent promotion state.
+  const promotions = await readPromotions();
+  const cls = applyPromotionsToClass(sourceCls, promotions);
+
   // Upcoming classes never render "late cancel" in the roster — a class that
   // hasn't happened yet has no attendance outcome to display.
   const visibleAttendees =
@@ -91,6 +92,8 @@ export default async function ClassDetailPage({
   const displayBooked = visibleAttendees.length;
   const isFull = displayBooked >= cls.capacity;
   const isLive = cls.lifecycle === "live";
+  const canAcceptMore =
+    cls.lifecycle === "upcoming" && cls.attendees.length < cls.capacity;
 
   return (
     <main className="mx-auto max-w-2xl">
@@ -119,7 +122,7 @@ export default async function ClassDetailPage({
           <span className={isFull ? "text-green-400" : ""}>
             {displayBooked}/{cls.capacity} booked
           </span>
-          {isFull && cls.waitlistCount > 0 && (
+          {cls.waitlistCount > 0 && (
             <span className="text-white/40">
               {cls.waitlistCount} on waitlist
             </span>
@@ -156,7 +159,11 @@ export default async function ClassDetailPage({
       </div>
 
       {cls.waitlist && cls.waitlist.length > 0 && (
-        <WaitlistSection initialWaitlist={cls.waitlist} />
+        <WaitlistSection
+          classId={cls.id}
+          waitlist={cls.waitlist}
+          canAcceptMore={canAcceptMore}
+        />
       )}
     </main>
   );

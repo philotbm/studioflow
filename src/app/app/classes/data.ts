@@ -94,13 +94,13 @@ export const upcomingClasses: StudioClass[] = [
       { name: "Cathal Donnelly", status: "attended" },
     ],
   },
-  // --- Upcoming (cancellation window closed — late cancel applies) ---
+  // --- Upcoming (cancellation window closed — one spot open, waitlist running) ---
   {
     id: "hiit-tue-1800",
     name: "HIIT Circuit",
     time: "Tue 18:00",
     instructor: "Mark",
-    booked: 10,
+    booked: 9,
     capacity: 10,
     waitlistCount: 3,
     lifecycle: "upcoming",
@@ -115,11 +115,10 @@ export const upcomingClasses: StudioClass[] = [
       { name: "Tomas Lenehan", status: "booked" },
       { name: "Fionnuala Darcy", status: "booked" },
       { name: "Caoimhe Barrett", status: "booked" },
-      { name: "Liam Hogan", status: "booked" },
     ],
     waitlist: [
-      { name: "Tara Lynch", position: 1 },
-      { name: "Ronan Kavanagh", position: 2 },
+      { name: "Saoirse Flynn", memberId: "saoirse-flynn", position: 1 },
+      { name: "Aoife Nolan", memberId: "aoife-nolan", position: 2 },
       { name: "Ailbhe Connolly", position: 3 },
     ],
   },

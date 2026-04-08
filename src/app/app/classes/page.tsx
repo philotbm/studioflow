@@ -1,9 +1,6 @@
 import Link from "next/link";
 import { upcomingClasses, type StudioClass } from "./data";
-
-const liveClasses = upcomingClasses.filter((c) => c.lifecycle === "live");
-const upcoming = upcomingClasses.filter((c) => c.lifecycle === "upcoming");
-const completed = upcomingClasses.filter((c) => c.lifecycle === "completed");
+import { applyPromotionsToClasses } from "./promotions";
 
 function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
   const isFull = cls.booked >= cls.capacity;
@@ -45,7 +42,7 @@ function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
           }`}
         >
           {cls.booked}/{cls.capacity} booked
-          {isFull && cls.waitlistCount > 0 && (
+          {cls.waitlistCount > 0 && (
             <span className={muted ? "text-white/20" : "text-white/40"}>
               {" "}&middot; {cls.waitlistCount} on waitlist
             </span>
@@ -56,7 +53,14 @@ function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
   );
 }
 
-export default function ClassesPage() {
+export default async function ClassesPage() {
+  // Apply cookie-backed promotions so the counts shown on the list match what
+  // the operator will see when they open the class detail.
+  const classes = await applyPromotionsToClasses(upcomingClasses);
+  const liveClasses = classes.filter((c) => c.lifecycle === "live");
+  const upcoming = classes.filter((c) => c.lifecycle === "upcoming");
+  const completed = classes.filter((c) => c.lifecycle === "completed");
+
   return (
     <main className="mx-auto max-w-2xl">
       <div className="flex items-center justify-between">
