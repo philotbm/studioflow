@@ -1,52 +1,107 @@
 import { cookies } from "next/headers";
 import type { Attendee, StudioClass, WaitlistEntry } from "./data";
 
-// Cookie-backed promotion log. Each entry records that a given waitlist
-// position on a given class has been promoted. The cookie lives in the user's
-// browser so it survives reload, navigation, and production rebuilds of the
-// (still seeded/static) source data.
+// v0.4.3 — append-only promotion event log.
+//
+// The cookie stores a chronological list of `PromotionEvent`s per
+// `(classId, position)` pair. The current set of *active* promotions (i.e.
+// who is currently lifted off the waitlist) is derived by taking the latest
+// event per pair and keeping only the ones whose latest action is `promote`.
+//
+// This is a minimal, justified refinement of the v0.4.2 model (which stored
+// only the active promotion snapshot). The audit surface on the class detail
+// page needs the history of actions — not just the current state — so the
+// storage shape has to be an event log. Persistence semantics are unchanged:
+// everything still lives in the user's browser cookie, so it survives
+// reloads, navigation, and production rebuilds of the seeded data.
+export type PromotionEventAction = "promote" | "unpromote";
+
+export type PromotionEvent = {
+  classId: string;
+  position: number;
+  action: PromotionEventAction;
+  at: number; // epoch ms
+};
+
+// Derived snapshot used by the transform.
 export type Promotion = { classId: string; position: number };
 
-const COOKIE_NAME = "sf_promotions_v1";
+const COOKIE_NAME = "sf_promotion_events_v1";
 const MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
-function isPromotion(value: unknown): value is Promotion {
+function isEvent(value: unknown): value is PromotionEvent {
+  if (typeof value !== "object" || value === null) return false;
+  const e = value as Partial<PromotionEvent>;
   return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as Promotion).classId === "string" &&
-    typeof (value as Promotion).position === "number"
+    typeof e.classId === "string" &&
+    typeof e.position === "number" &&
+    (e.action === "promote" || e.action === "unpromote") &&
+    typeof e.at === "number"
   );
 }
 
-export async function readPromotions(): Promise<Promotion[]> {
+export async function readPromotionEvents(): Promise<PromotionEvent[]> {
   try {
     const jar = await cookies();
     const raw = jar.get(COOKIE_NAME)?.value;
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isPromotion);
+    return parsed.filter(isEvent);
   } catch {
     return [];
   }
 }
 
-export async function writePromotions(promotions: Promotion[]): Promise<void> {
+export async function writePromotionEvents(
+  events: PromotionEvent[],
+): Promise<void> {
   const jar = await cookies();
-  jar.set(COOKIE_NAME, JSON.stringify(promotions), {
+  jar.set(COOKIE_NAME, JSON.stringify(events), {
     path: "/",
     sameSite: "lax",
     maxAge: MAX_AGE_SECONDS,
   });
 }
 
-// Pure transform: given the source-of-truth class and the set of active
-// promotions, produce the effective class that should be rendered.
+// Derive the current active promotions by folding the event log: for every
+// (classId, position) pair, the most recent event wins.
+export function deriveActivePromotions(
+  events: PromotionEvent[],
+): Promotion[] {
+  const latest = new Map<string, PromotionEvent>();
+  for (const ev of [...events].sort((a, b) => a.at - b.at)) {
+    latest.set(`${ev.classId}:${ev.position}`, ev);
+  }
+  const active: Promotion[] = [];
+  for (const ev of latest.values()) {
+    if (ev.action === "promote") {
+      active.push({ classId: ev.classId, position: ev.position });
+    }
+  }
+  return active;
+}
+
+// Used by server actions to no-op when the caller's intent matches the
+// already-current state (e.g. clicking Promote twice).
+export function isCurrentlyPromoted(
+  events: PromotionEvent[],
+  classId: string,
+  position: number,
+): boolean {
+  const forPair = events
+    .filter((e) => e.classId === classId && e.position === position)
+    .sort((a, b) => b.at - a.at);
+  return forPair.length > 0 && forPair[0].action === "promote";
+}
+
+// Pure transform: given the source-of-truth class and the active promotion
+// set, produce the effective class that should be rendered.
 //
-// - Promoted waitlist entries become `booked` attendees.
+// - Promoted waitlist entries become `booked` attendees, tagged with
+//   `promotedFromPosition` so the UI can offer an inline Unpromote action.
 // - Promotions are capped at remaining capacity; any overflow stays on the
-//   waitlist (so the class never exceeds capacity).
+//   waitlist (the class can never exceed capacity).
 // - `booked` and `waitlistCount` are recomputed to match the transformed
 //   roster, so the trust gap stays closed.
 export function applyPromotionsToClass(
@@ -73,6 +128,7 @@ export function applyPromotionsToClass(
       name: w.name,
       memberId: w.memberId,
       status: "booked",
+      promotedFromPosition: w.position,
     })),
   ];
 
@@ -92,7 +148,34 @@ export function applyPromotionsToClass(
 export async function applyPromotionsToClasses(
   classes: StudioClass[],
 ): Promise<StudioClass[]> {
-  const promotions = await readPromotions();
-  if (promotions.length === 0) return classes;
-  return classes.map((c) => applyPromotionsToClass(c, promotions));
+  const events = await readPromotionEvents();
+  const active = deriveActivePromotions(events);
+  if (active.length === 0) return classes;
+  return classes.map((c) => applyPromotionsToClass(c, active));
+}
+
+// Plain helper — not a React component — so the `Date.now()` call here
+// isn't subject to React's purity rules. Used by the class detail page to
+// capture a single wall-clock reading per request for relative-time display
+// in the audit log.
+export async function readPromotionEventsWithClock(): Promise<{
+  events: PromotionEvent[];
+  now: number;
+}> {
+  const events = await readPromotionEvents();
+  return { events, now: Date.now() };
+}
+
+// Compact, operator-friendly relative time for the audit surface.
+export function formatRelative(atMs: number, nowMs: number = Date.now()): string {
+  const deltaMs = Math.max(0, nowMs - atMs);
+  const s = Math.floor(deltaMs / 1000);
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
 }

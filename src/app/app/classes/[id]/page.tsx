@@ -1,8 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { unpromoteWaitlistEntry } from "../actions";
 import { upcomingClasses, type Attendee } from "../data";
-import { applyPromotionsToClass, readPromotions } from "../promotions";
+import {
+  applyPromotionsToClass,
+  deriveActivePromotions,
+  readPromotionEventsWithClock,
+} from "../promotions";
 import LiveAttendees from "./live-attendees";
+import PromotionAuditLog from "./audit-log";
 import WaitlistSection from "./waitlist-section";
 
 const statusLabel: Record<string, string> = {
@@ -35,13 +41,61 @@ const lifecycleStyle: Record<string, string> = {
   completed: "text-white/40 border-white/10",
 };
 
-function AttendeeRow({ a }: { a: Attendee }) {
+function AttendeeRow({ a, classId }: { a: Attendee; classId: string }) {
+  const statusSpan = (
+    <span className={`text-xs ${statusColor[a.status]}`}>
+      {statusLabel[a.status]}
+    </span>
+  );
+
+  // Promoted entry: not a whole-row Link (the inline Unpromote form and the
+  // name Link need to be siblings). Visually flagged with an amber border +
+  // "Promoted" badge so the operator knows it's reversible.
+  if (a.promotedFromPosition !== undefined) {
+    return (
+      <li className="flex items-center justify-between gap-3 rounded border border-amber-400/25 px-4 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {a.memberId ? (
+            <Link
+              href={`/app/members/${a.memberId}`}
+              className="text-sm hover:underline"
+            >
+              {a.name}
+            </Link>
+          ) : (
+            <span className="text-sm">{a.name}</span>
+          )}
+          <span className="rounded-full border border-amber-400/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-400/80">
+            Promoted
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <form action={unpromoteWaitlistEntry}>
+            <input type="hidden" name="classId" value={classId} />
+            <input
+              type="hidden"
+              name="position"
+              value={a.promotedFromPosition}
+            />
+            <button
+              type="submit"
+              className="text-xs text-white/50 underline-offset-2 hover:text-white hover:underline"
+            >
+              Undo
+            </button>
+          </form>
+          {statusSpan}
+        </div>
+      </li>
+    );
+  }
+
+  // Non-promoted attendee — whole row is a Link when a member record exists
+  // (v0.4.1 behaviour preserved).
   const inner = (
     <>
       <span className="text-sm">{a.name}</span>
-      <span className={`text-xs ${statusColor[a.status]}`}>
-        {statusLabel[a.status]}
-      </span>
+      {statusSpan}
     </>
   );
 
@@ -77,10 +131,13 @@ export default async function ClassDetailPage({
     notFound();
   }
 
-  // Apply any cookie-backed promotions for this class so the rendered roster,
-  // waitlist, and booked count all reflect the persistent promotion state.
-  const promotions = await readPromotions();
-  const cls = applyPromotionsToClass(sourceCls, promotions);
+  // One request-scoped read covers both needs: the active set feeds the
+  // transform, the full event log feeds the audit surface, and `renderedAt`
+  // is captured inside the non-component helper so the component body stays
+  // free of impure calls (satisfies React's purity rules).
+  const { events, now: renderedAt } = await readPromotionEventsWithClock();
+  const active = deriveActivePromotions(events);
+  const cls = applyPromotionsToClass(sourceCls, active);
 
   // Upcoming classes never render "late cancel" in the roster — a class that
   // hasn't happened yet has no attendance outcome to display.
@@ -152,7 +209,7 @@ export default async function ClassDetailPage({
         ) : (
           <ul className="mt-3 flex flex-col gap-2">
             {visibleAttendees.map((a, i) => (
-              <AttendeeRow key={i} a={a} />
+              <AttendeeRow key={i} a={a} classId={cls.id} />
             ))}
           </ul>
         )}
@@ -165,6 +222,12 @@ export default async function ClassDetailPage({
           canAcceptMore={canAcceptMore}
         />
       )}
+
+      <PromotionAuditLog
+        sourceCls={sourceCls}
+        events={events}
+        now={renderedAt}
+      />
     </main>
   );
 }

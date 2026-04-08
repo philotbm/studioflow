@@ -2,6 +2,10 @@ export type Attendee = {
   name: string;
   memberId?: string;
   status: "booked" | "attended" | "late_cancel" | "no_show" | "checked_in" | "not_checked_in";
+  // Set by the promotions transform when an attendee was lifted off the
+  // waitlist. Preserves the original waitlist position so the Unpromote
+  // action can revert cleanly.
+  promotedFromPosition?: number;
 };
 
 export type Lifecycle = "upcoming" | "live" | "completed";
