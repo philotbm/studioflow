@@ -6,6 +6,11 @@ export type Attendee = {
   // waitlist. Preserves the original waitlist position so the Unpromote
   // action can revert cleanly.
   promotedFromPosition?: number;
+  // How the promotion happened:
+  //   "manual" — recorded in the cookie event log via promoteWaitlistEntry
+  //   "auto"   — derived every render by the FIFO auto-promotion pass,
+  //              never written to the cookie, has no Undo action
+  promotionType?: "manual" | "auto";
 };
 
 export type Lifecycle = "upcoming" | "live" | "completed";

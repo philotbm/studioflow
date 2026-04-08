@@ -49,11 +49,26 @@ function AttendeeRow({ a, classId }: { a: Attendee; classId: string }) {
   );
 
   // Promoted entry: not a whole-row Link (the inline Unpromote form and the
-  // name Link need to be siblings). Visually flagged with an amber border +
-  // "Promoted" badge so the operator knows it's reversible.
+  // name Link need to be siblings). Two visual variants:
+  //
+  //   manual — amber border, "Promoted" badge, inline Undo form. This is a
+  //            deliberate operator action recorded in the cookie event log.
+  //   auto   — soft muted border, "Auto" badge, no Undo. This is a derived
+  //            FIFO default that the operator never explicitly triggered;
+  //            reversing it would be meaningless (the transform would just
+  //            re-apply it on the next render).
   if (a.promotedFromPosition !== undefined) {
+    const isAuto = a.promotionType === "auto";
+    const rowBorder = isAuto ? "border-white/10" : "border-amber-400/25";
+    const badgeClass = isAuto
+      ? "border-white/15 text-white/40"
+      : "border-amber-400/30 text-amber-400/80";
+    const badgeLabel = isAuto ? "Auto" : "Promoted";
+
     return (
-      <li className="flex items-center justify-between gap-3 rounded border border-amber-400/25 px-4 py-2">
+      <li
+        className={`flex items-center justify-between gap-3 rounded border ${rowBorder} px-4 py-2`}
+      >
         <div className="flex min-w-0 items-center gap-2">
           {a.memberId ? (
             <Link
@@ -65,25 +80,29 @@ function AttendeeRow({ a, classId }: { a: Attendee; classId: string }) {
           ) : (
             <span className="text-sm">{a.name}</span>
           )}
-          <span className="rounded-full border border-amber-400/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-400/80">
-            Promoted
+          <span
+            className={`rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${badgeClass}`}
+          >
+            {badgeLabel}
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <form action={unpromoteWaitlistEntry}>
-            <input type="hidden" name="classId" value={classId} />
-            <input
-              type="hidden"
-              name="position"
-              value={a.promotedFromPosition}
-            />
-            <button
-              type="submit"
-              className="text-xs text-white/50 underline-offset-2 hover:text-white hover:underline"
-            >
-              Undo
-            </button>
-          </form>
+          {!isAuto && (
+            <form action={unpromoteWaitlistEntry}>
+              <input type="hidden" name="classId" value={classId} />
+              <input
+                type="hidden"
+                name="position"
+                value={a.promotedFromPosition}
+              />
+              <button
+                type="submit"
+                className="text-xs text-white/50 underline-offset-2 hover:text-white hover:underline"
+              >
+                Undo
+              </button>
+            </form>
+          )}
           {statusSpan}
         </div>
       </li>
@@ -149,8 +168,17 @@ export default async function ClassDetailPage({
   const displayBooked = visibleAttendees.length;
   const isFull = displayBooked >= cls.capacity;
   const isLive = cls.lifecycle === "live";
+
+  // Manual promote availability has to ignore auto-promoted attendees, since
+  // auto is a derived FIFO default the operator can override. A new manual
+  // promote only needs room against the source + already-manual bookings —
+  // auto-promoted entries get displaced back to the waitlist automatically
+  // when a manual promote claims their slot.
+  const nonAutoAttendeeCount = cls.attendees.filter(
+    (a) => a.promotionType !== "auto",
+  ).length;
   const canAcceptMore =
-    cls.lifecycle === "upcoming" && cls.attendees.length < cls.capacity;
+    cls.lifecycle === "upcoming" && nonAutoAttendeeCount < cls.capacity;
 
   return (
     <main className="mx-auto max-w-2xl">

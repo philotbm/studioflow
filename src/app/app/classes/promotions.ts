@@ -95,53 +95,94 @@ export function isCurrentlyPromoted(
   return forPair.length > 0 && forPair[0].action === "promote";
 }
 
-// Pure transform: given the source-of-truth class and the active promotion
-// set, produce the effective class that should be rendered.
+// Pure transform: given the source-of-truth class and the active set of
+// manual promotions (derived from the cookie event log), produce the
+// effective class that should be rendered.
 //
-// - Promoted waitlist entries become `booked` attendees, tagged with
-//   `promotedFromPosition` so the UI can offer an inline Unpromote action.
-// - Promotions are capped at remaining capacity; any overflow stays on the
-//   waitlist (the class can never exceed capacity).
-// - `booked` and `waitlistCount` are recomputed to match the transformed
-//   roster, so the trust gap stays closed.
+// This runs in two phases — in order — so that manual operator intent
+// always wins over FIFO defaults:
+//
+//   Phase 1 — Manual promotions
+//     Apply every waitlist entry that has an active manual `promote` event.
+//     Manual promotions are capped by capacity; any manual overflow stays on
+//     the waitlist to be picked up later. Accepted entries are tagged with
+//     `promotionType: "manual"` so the UI shows the Promoted badge + Undo.
+//
+//   Phase 2 — FIFO auto-promotion
+//     While the class still has free capacity AND there are non-manual
+//     waitlist entries, auto-promote the next one in queue order (lowest
+//     position first). Accepted entries are tagged with
+//     `promotionType: "auto"`, which the UI renders as a softer "Auto" badge
+//     and does NOT offer Undo for — auto-promotion is a pure derivation and
+//     is never written to the cookie.
+//
+//   - Only applies to `lifecycle === "upcoming"` classes. Live and completed
+//     classes are never auto-promoted (they represent decided state).
+//   - `booked` and `waitlistCount` are recomputed from the transformed
+//     roster, so the trust gap stays closed and the class can never exceed
+//     its capacity.
 export function applyPromotionsToClass(
   cls: StudioClass,
   promotions: Promotion[],
 ): StudioClass {
-  const forThis = promotions.filter((p) => p.classId === cls.id);
-  if (forThis.length === 0) return cls;
-
   const waitlist = cls.waitlist ?? [];
   if (waitlist.length === 0) return cls;
 
-  const promotedPositions = new Set(forThis.map((p) => p.position));
-  const promoted = waitlist.filter((w) => promotedPositions.has(w.position));
-  const remaining = waitlist.filter((w) => !promotedPositions.has(w.position));
+  // --- Phase 1: manual promotions ---
+  const manualPositions = new Set(
+    promotions.filter((p) => p.classId === cls.id).map((p) => p.position),
+  );
+  const manualEntries = waitlist.filter((w) => manualPositions.has(w.position));
+  const nonManualEntries = waitlist.filter(
+    (w) => !manualPositions.has(w.position),
+  );
 
-  const spotsFree = Math.max(0, cls.capacity - cls.attendees.length);
-  const toAccept = promoted.slice(0, spotsFree);
-  const overflow = promoted.slice(spotsFree);
+  const spotsBeforeManual = Math.max(0, cls.capacity - cls.attendees.length);
+  const manualAccept = manualEntries.slice(0, spotsBeforeManual);
+  const manualOverflow = manualEntries.slice(spotsBeforeManual);
 
-  const newAttendees: Attendee[] = [
+  const attendees: Attendee[] = [
     ...cls.attendees,
-    ...toAccept.map<Attendee>((w) => ({
+    ...manualAccept.map<Attendee>((w) => ({
       name: w.name,
       memberId: w.memberId,
       status: "booked",
       promotedFromPosition: w.position,
+      promotionType: "manual",
     })),
   ];
 
-  const newWaitlist: WaitlistEntry[] = [...remaining, ...overflow].sort(
-    (a, b) => a.position - b.position,
-  );
+  // Remaining waitlist after manual pass, always in queue order.
+  const remainingWaitlist: WaitlistEntry[] = [
+    ...nonManualEntries,
+    ...manualOverflow,
+  ].sort((a, b) => a.position - b.position);
+
+  // --- Phase 2: FIFO auto-promotion ---
+  // Only for upcoming classes; live/completed classes never auto-fill.
+  if (cls.lifecycle === "upcoming") {
+    while (
+      attendees.length < cls.capacity &&
+      remainingWaitlist.length > 0
+    ) {
+      const next = remainingWaitlist.shift();
+      if (!next) break;
+      attendees.push({
+        name: next.name,
+        memberId: next.memberId,
+        status: "booked",
+        promotedFromPosition: next.position,
+        promotionType: "auto",
+      });
+    }
+  }
 
   return {
     ...cls,
-    attendees: newAttendees,
-    waitlist: newWaitlist,
-    booked: newAttendees.length,
-    waitlistCount: newWaitlist.length,
+    attendees,
+    waitlist: remainingWaitlist,
+    booked: attendees.length,
+    waitlistCount: remainingWaitlist.length,
   };
 }
 

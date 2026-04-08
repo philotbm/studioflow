@@ -4,13 +4,17 @@ import type { WaitlistEntry } from "../data";
 import { members } from "../../members/data";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
 
+// De-emphasised from v0.4.4: tone opacities softened from /80 → /60 and
+// borders from /30 → /20 so pills read as supporting context rather than
+// demanding attention, now that the queue auto-fills in FIFO order and
+// the operator rarely needs to act on a signal to make a decision.
 function SignalPill({ signal }: { signal: WaitlistSignal }) {
   const toneClass =
     signal.tone === "positive"
-      ? "border-green-400/30 text-green-400/80"
+      ? "border-green-400/20 text-green-400/60"
       : signal.tone === "attention"
-        ? "border-amber-400/30 text-amber-400/80"
-        : "border-white/15 text-white/50";
+        ? "border-amber-400/20 text-amber-400/60"
+        : "border-white/10 text-white/40";
   return (
     <span
       className={`rounded-full border px-2 py-0.5 text-[11px] leading-4 ${toneClass}`}
@@ -38,11 +42,16 @@ export default function WaitlistSection({
         <span className="ml-2 text-white/40">{waitlist.length}</span>
       </h2>
       <ol className="mt-3 flex flex-col gap-2">
-        {waitlist.map((entry) => {
+        {waitlist.map((entry, index) => {
           const member = entry.memberId
             ? members.find((m) => m.id === entry.memberId)
             : undefined;
           const signals = waitlistSignalsFor(member);
+          // FIFO: the first rendered waitlist entry is always the next one
+          // the system will auto-promote when a spot opens. Flag it with a
+          // small non-interactive "Next up" label so the operator knows
+          // no action is needed — the queue handles itself.
+          const isNextUp = index === 0;
 
           return (
             <li
@@ -63,6 +72,11 @@ export default function WaitlistSection({
                     </Link>
                   ) : (
                     <span className="text-sm">{entry.name}</span>
+                  )}
+                  {isNextUp && (
+                    <span className="rounded-full border border-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white/40">
+                      Next up
+                    </span>
                   )}
                 </div>
                 {signals.length > 0 && (
