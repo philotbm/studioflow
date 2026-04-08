@@ -1,5 +1,6 @@
 export type Attendee = {
   name: string;
+  memberId?: string;
   status: "booked" | "attended" | "late_cancel" | "no_show" | "checked_in" | "not_checked_in";
 };
 
@@ -7,6 +8,7 @@ export type Lifecycle = "upcoming" | "live" | "completed";
 
 export type WaitlistEntry = {
   name: string;
+  memberId?: string;
   position: number;
 };
 
@@ -36,8 +38,8 @@ export const upcomingClasses: StudioClass[] = [
     waitlistCount: 0,
     lifecycle: "completed",
     attendees: [
-      { name: "Emma Kelly", status: "attended" },
-      { name: "Ciara Byrne", status: "attended" },
+      { name: "Emma Kelly", memberId: "emma-kelly", status: "attended" },
+      { name: "Ciara Byrne", memberId: "ciara-byrne", status: "attended" },
       { name: "Niamh Walsh", status: "attended" },
       { name: "Orla Duffy", status: "attended" },
       { name: "Sinead Murphy", status: "no_show" },
@@ -57,10 +59,20 @@ export const upcomingClasses: StudioClass[] = [
     waitlistCount: 0,
     lifecycle: "live",
     attendees: [
-      { name: "Declan Power", status: "checked_in" },
-      { name: "Fiona Healy", status: "not_checked_in" },
-      { name: "Conor Brady", status: "checked_in" },
+      { name: "Declan Power", memberId: "declan-power", status: "checked_in" },
+      { name: "Fiona Healy", memberId: "fiona-healy", status: "not_checked_in" },
+      { name: "Conor Brady", memberId: "conor-brady", status: "checked_in" },
       { name: "Laura Keane", status: "not_checked_in" },
+      { name: "Brendan Quinn", status: "checked_in" },
+      { name: "Shauna Reid", status: "checked_in" },
+      { name: "Kevin Molloy", status: "not_checked_in" },
+      { name: "Aidan Cullen", status: "checked_in" },
+      { name: "Michelle O'Rourke", status: "checked_in" },
+      { name: "Paul Sweeney", status: "not_checked_in" },
+      { name: "Emer Fahey", status: "checked_in" },
+      { name: "Ruairi Coyle", status: "checked_in" },
+      { name: "Isabel Burke", status: "checked_in" },
+      { name: "Diarmuid Hayes", status: "checked_in" },
     ],
   },
   // --- Completed ---
@@ -74,9 +86,12 @@ export const upcomingClasses: StudioClass[] = [
     waitlistCount: 0,
     lifecycle: "completed",
     attendees: [
-      { name: "Saoirse Flynn", status: "attended" },
+      { name: "Saoirse Flynn", memberId: "saoirse-flynn", status: "attended" },
       { name: "Grainne Doyle", status: "attended" },
       { name: "Eimear Cahill", status: "no_show" },
+      { name: "Sile Brennan", status: "attended" },
+      { name: "Brigid Moran", status: "attended" },
+      { name: "Cathal Donnelly", status: "attended" },
     ],
   },
   // --- Upcoming (cancellation window closed — late cancel applies) ---
@@ -91,11 +106,16 @@ export const upcomingClasses: StudioClass[] = [
     lifecycle: "upcoming",
     cancellationWindowClosed: true,
     attendees: [
-      { name: "Sean Brennan", status: "booked" },
-      { name: "Padraig Roche", status: "booked" },
+      { name: "Sean Brennan", memberId: "sean-brennan", status: "booked" },
+      { name: "Padraig Roche", memberId: "padraig-roche", status: "booked" },
       { name: "Cian O'Neill", status: "booked" },
-      { name: "Dara Fitzpatrick", status: "late_cancel" },
       { name: "Eoin Gallagher", status: "booked" },
+      { name: "Shane O'Connor", status: "booked" },
+      { name: "Niall McCarthy", status: "booked" },
+      { name: "Tomas Lenehan", status: "booked" },
+      { name: "Fionnuala Darcy", status: "booked" },
+      { name: "Caoimhe Barrett", status: "booked" },
+      { name: "Liam Hogan", status: "booked" },
     ],
     waitlist: [
       { name: "Tara Lynch", position: 1 },
@@ -115,7 +135,7 @@ export const upcomingClasses: StudioClass[] = [
     lifecycle: "upcoming",
     cancellationWindowClosed: false,
     attendees: [
-      { name: "Clodagh Murray", status: "booked" },
+      { name: "Clodagh Murray", memberId: "clodagh-murray", status: "booked" },
       { name: "Aoibhinn Smyth", status: "booked" },
       { name: "Deirdre Whelan", status: "booked" },
     ],
@@ -132,9 +152,17 @@ export const upcomingClasses: StudioClass[] = [
     lifecycle: "upcoming",
     cancellationWindowClosed: false,
     attendees: [
-      { name: "Emma Kelly", status: "booked" },
+      { name: "Emma Kelly", memberId: "emma-kelly", status: "booked" },
       { name: "Niamh Walsh", status: "booked" },
       { name: "Orla Duffy", status: "booked" },
+      { name: "Maeve Ryan", status: "booked" },
+      { name: "Roisin Daly", status: "booked" },
+      { name: "Aisling Nolan", status: "booked" },
+      { name: "Sinead Murphy", status: "booked" },
+      { name: "Brid Costello", status: "booked" },
+      { name: "Una Mac Mahon", status: "booked" },
+      { name: "Grace Foley", status: "booked" },
+      { name: "Laoise Tierney", status: "booked" },
     ],
   },
 ];

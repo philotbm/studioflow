@@ -1,7 +1,22 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import type { Attendee } from "../data";
+
+function NameCell({ a }: { a: Attendee }) {
+  if (a.memberId) {
+    return (
+      <Link
+        href={`/app/members/${a.memberId}`}
+        className="text-sm hover:underline"
+      >
+        {a.name}
+      </Link>
+    );
+  }
+  return <span className="text-sm">{a.name}</span>;
+}
 
 export default function LiveAttendees({
   initialAttendees,
@@ -25,7 +40,7 @@ export default function LiveAttendees({
           key={i}
           className="flex items-center justify-between rounded border border-white/10 px-4 py-2"
         >
-          <span className="text-sm">{a.name}</span>
+          <NameCell a={a} />
           {a.status === "checked_in" ? (
             <span className="text-xs text-green-400">Checked in</span>
           ) : a.status === "not_checked_in" ? (
@@ -36,9 +51,7 @@ export default function LiveAttendees({
               Check in
             </button>
           ) : (
-            <span className="text-xs text-red-400">
-              {a.status === "late_cancel" ? "Late cancel" : a.status}
-            </span>
+            <span className="text-xs text-white/40">{a.status}</span>
           )}
         </li>
       ))}

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { upcomingClasses } from "../data";
+import { upcomingClasses, type Attendee } from "../data";
 import LiveAttendees from "./live-attendees";
+import WaitlistSection from "./waitlist-section";
 
 const statusLabel: Record<string, string> = {
   booked: "Booked",
@@ -37,6 +38,36 @@ export function generateStaticParams() {
   return upcomingClasses.map((cls) => ({ id: cls.id }));
 }
 
+function AttendeeRow({ a }: { a: Attendee }) {
+  const inner = (
+    <>
+      <span className="text-sm">{a.name}</span>
+      <span className={`text-xs ${statusColor[a.status]}`}>
+        {statusLabel[a.status]}
+      </span>
+    </>
+  );
+
+  if (a.memberId) {
+    return (
+      <li>
+        <Link
+          href={`/app/members/${a.memberId}`}
+          className="flex items-center justify-between rounded border border-white/10 px-4 py-2 hover:border-white/25"
+        >
+          {inner}
+        </Link>
+      </li>
+    );
+  }
+
+  return (
+    <li className="flex items-center justify-between rounded border border-white/10 px-4 py-2">
+      {inner}
+    </li>
+  );
+}
+
 export default async function ClassDetailPage({
   params,
 }: {
@@ -49,7 +80,16 @@ export default async function ClassDetailPage({
     notFound();
   }
 
-  const isFull = cls.booked >= cls.capacity;
+  // Visible roster drives the booked count so it matches what the user sees.
+  // Upcoming classes never render "late cancel" in the roster — a class that
+  // hasn't happened yet has no attendance outcome to display.
+  const visibleAttendees =
+    cls.lifecycle === "upcoming"
+      ? cls.attendees.filter((a) => a.status !== "late_cancel")
+      : cls.attendees;
+
+  const displayBooked = visibleAttendees.length;
+  const isFull = displayBooked >= cls.capacity;
   const isLive = cls.lifecycle === "live";
 
   return (
@@ -77,7 +117,7 @@ export default async function ClassDetailPage({
           <span>{cls.time}</span>
           <span>{cls.instructor}</span>
           <span className={isFull ? "text-green-400" : ""}>
-            {cls.booked}/{cls.capacity} booked
+            {displayBooked}/{cls.capacity} booked
           </span>
           {isFull && cls.waitlistCount > 0 && (
             <span className="text-white/40">
@@ -105,46 +145,18 @@ export default async function ClassDetailPage({
         <h2 className="text-sm font-medium text-white/70">Attendees</h2>
 
         {isLive ? (
-          <LiveAttendees initialAttendees={cls.attendees} />
+          <LiveAttendees initialAttendees={visibleAttendees} />
         ) : (
           <ul className="mt-3 flex flex-col gap-2">
-            {cls.attendees.map((a, i) => (
-              <li
-                key={i}
-                className="flex items-center justify-between rounded border border-white/10 px-4 py-2"
-              >
-                <span className="text-sm">{a.name}</span>
-                <span className={`text-xs ${statusColor[a.status]}`}>
-                  {statusLabel[a.status]}
-                </span>
-              </li>
+            {visibleAttendees.map((a, i) => (
+              <AttendeeRow key={i} a={a} />
             ))}
           </ul>
         )}
       </div>
 
       {cls.waitlist && cls.waitlist.length > 0 && (
-        <div className="mt-8">
-          <h2 className="text-sm font-medium text-white/70">
-            Waitlist
-            <span className="ml-2 text-white/40">
-              {cls.waitlist.length}
-            </span>
-          </h2>
-          <ol className="mt-3 flex flex-col gap-2">
-            {cls.waitlist.map((entry) => (
-              <li
-                key={entry.position}
-                className="flex items-center justify-between rounded border border-white/10 px-4 py-2"
-              >
-                <span className="text-sm">{entry.name}</span>
-                <span className="text-xs text-white/30">
-                  #{entry.position}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </div>
+        <WaitlistSection initialWaitlist={cls.waitlist} />
       )}
     </main>
   );
