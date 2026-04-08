@@ -189,9 +189,11 @@ export function applyPromotionsToClass(
 export async function applyPromotionsToClasses(
   classes: StudioClass[],
 ): Promise<StudioClass[]> {
+  // Always run the transform — even with zero active manual promotions,
+  // phase 2 (FIFO auto-promote) may still fire and change the rendered
+  // booked/waitlist counts on the list cards.
   const events = await readPromotionEvents();
   const active = deriveActivePromotions(events);
-  if (active.length === 0) return classes;
   return classes.map((c) => applyPromotionsToClass(c, active));
 }
 
