@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Attendee } from "../data";
+import { getAttendeeDisplayStatus, toneBadgeClasses } from "./status";
 
 export default function LiveAttendees({
   initialAttendees,
@@ -19,29 +20,35 @@ export default function LiveAttendees({
   }
 
   return (
-    <ul className="mt-3 flex flex-col gap-2">
-      {attendees.map((a, i) => (
-        <li
-          key={i}
-          className="flex items-center justify-between rounded border border-white/10 px-4 py-2"
-        >
-          <span className="text-sm">{a.name}</span>
-          {a.status === "checked_in" ? (
-            <span className="text-xs text-green-400">Checked in</span>
-          ) : a.status === "not_checked_in" ? (
-            <button
-              onClick={() => handleCheckIn(i)}
-              className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40"
-            >
-              Check in
-            </button>
-          ) : (
-            <span className="text-xs text-red-400">
-              {a.status === "late_cancel" ? "Late cancel" : a.status}
-            </span>
-          )}
-        </li>
-      ))}
+    <ul className="mt-3 flex flex-col gap-1.5">
+      {attendees.map((a, i) => {
+        const display = getAttendeeDisplayStatus(a, "live");
+        const isCheckedIn = a.status === "checked_in" || a.status === "attended";
+        const canCheckIn = !isCheckedIn && a.status !== "late_cancel";
+
+        return (
+          <li
+            key={i}
+            className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-4 py-2.5 hover:border-white/20 hover:bg-white/[0.04]"
+          >
+            <span className="text-sm text-white/85">{a.name}</span>
+            {canCheckIn ? (
+              <button
+                onClick={() => handleCheckIn(i)}
+                className="rounded-full border border-white/20 bg-white/[0.03] px-2.5 py-0.5 text-[11px] text-white/70 hover:text-white hover:border-white/40 hover:bg-white/[0.08]"
+              >
+                Check in
+              </button>
+            ) : (
+              <span
+                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${toneBadgeClasses[display.tone]}`}
+              >
+                {display.label}
+              </span>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
