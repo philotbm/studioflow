@@ -28,10 +28,11 @@ export function getAttendeeDisplayStatus(
 
   if (lifecycle === "upcoming") {
     // Pre-class: only booking-style states make sense.
-    // A late_cancel is the one outcome that can be locked in
-    // before the class starts (cancellation window closed).
+    // A cancellation after the window closes is locked in before
+    // the class starts — we call it out as "Cancelled (late)" so
+    // the label reads as a booking event, not an attendance outcome.
     if (raw === "late_cancel") {
-      return { label: "Late cancel", tone: "warning" };
+      return { label: "Cancelled (late)", tone: "warning" };
     }
     return { label: "Booked", tone: "neutral" };
   }

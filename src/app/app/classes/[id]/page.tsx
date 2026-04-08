@@ -1,9 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { upcomingClasses } from "../data";
-import LiveAttendees from "./live-attendees";
-import WaitlistPanel from "./waitlist-panel";
-import { getAttendeeDisplayStatus, toneBadgeClasses } from "./status";
+import SessionAttendance from "./session-attendance";
 
 const lifecycleLabel: Record<string, string> = {
   upcoming: "Upcoming",
@@ -33,19 +31,8 @@ export default async function ClassDetailPage({
     notFound();
   }
 
-  const isFull = cls.booked >= cls.capacity;
   const isLive = cls.lifecycle === "live";
-  const isCompleted = cls.lifecycle === "completed";
   const isUpcoming = cls.lifecycle === "upcoming";
-  const fillPct = Math.min(100, Math.round((cls.booked / cls.capacity) * 100));
-
-  // Section heading copy reflects what the list actually represents
-  // for the lifecycle stage of the class.
-  const attendeeHeading = isUpcoming
-    ? "Booked attendees"
-    : isLive
-    ? "Check-in"
-    : "Attendance";
 
   return (
     <main className="mx-auto max-w-2xl">
@@ -77,29 +64,6 @@ export default async function ClassDetailPage({
           </span>
         </div>
 
-        {/* Capacity */}
-        <div className="mt-5">
-          <div className="flex items-baseline justify-between text-xs">
-            <span className="text-white/50">Capacity</span>
-            <span className={isFull ? "text-green-300" : "text-white/70"}>
-              {cls.booked}/{cls.capacity} booked
-              {isFull && cls.waitlistCount > 0 && (
-                <span className="ml-2 text-white/40">
-                  +{cls.waitlistCount} waitlist
-                </span>
-              )}
-            </span>
-          </div>
-          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
-            <div
-              className={`h-full rounded-full ${
-                isFull ? "bg-green-400/70" : "bg-white/40"
-              }`}
-              style={{ width: `${fillPct}%` }}
-            />
-          </div>
-        </div>
-
         {/* Cancellation window indicator */}
         {isUpcoming && cls.cancellationWindowClosed !== undefined && (
           <div className="mt-4">
@@ -125,51 +89,13 @@ export default async function ClassDetailPage({
         )}
       </section>
 
-      {/* Attendees */}
-      <section className="mt-6">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-sm font-medium text-white/70">
-            {attendeeHeading}
-          </h2>
-          <span className="text-xs text-white/30">
-            {cls.attendees.length} {cls.attendees.length === 1 ? "person" : "people"}
-          </span>
-        </div>
-
-        {isLive ? (
-          <LiveAttendees initialAttendees={cls.attendees} />
-        ) : (
-          <ul className="mt-3 flex flex-col gap-1.5">
-            {cls.attendees.map((a, i) => {
-              const display = getAttendeeDisplayStatus(a, cls.lifecycle);
-              return (
-                <li
-                  key={i}
-                  className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-4 py-2.5 hover:border-white/20 hover:bg-white/[0.04]"
-                >
-                  <span className="text-sm text-white/85">{a.name}</span>
-                  <span
-                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${toneBadgeClasses[display.tone]}`}
-                  >
-                    {display.label}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        {isCompleted && (
-          <p className="mt-3 text-xs text-white/30">
-            Outcomes are final once the class has ended.
-          </p>
-        )}
-      </section>
-
-      {/* Waitlist (clickable / inspectable) */}
-      {cls.waitlist && cls.waitlist.length > 0 && (
-        <WaitlistPanel waitlist={cls.waitlist} />
-      )}
+      {/* Interactive attendance: capacity bar + attendees + waitlist */}
+      <SessionAttendance
+        initialAttendees={cls.attendees}
+        initialWaitlist={cls.waitlist ?? []}
+        capacity={cls.capacity}
+        lifecycle={cls.lifecycle}
+      />
     </main>
   );
 }

@@ -571,4 +571,93 @@ export const members: Member[] = [
       { date: "25 Mar", event: "Purchased 5-Class Pass", type: "purchase" },
     ],
   },
+  // --- Lightweight member records for people seen on class/waitlist
+  //     rows. Kept minimal on purpose: these are operator-visible names
+  //     without a full profile yet, so the detail page renders a clean
+  //     "new member, limited history" view.
+  ...stubMembers([
+    ["niamh-walsh", "Niamh Walsh", "10-Class Pass", 6],
+    ["orla-duffy", "Orla Duffy", "Drop-in", 1],
+    ["sinead-murphy", "Sinead Murphy", "5-Class Pass", 2],
+    ["roisin-daly", "Roisin Daly", "10-Class Pass", 4],
+    ["aisling-nolan", "Aisling Nolan", "Unlimited Monthly", null],
+    ["maeve-ryan", "Maeve Ryan", "5-Class Pass", 3],
+    ["laura-keane", "Laura Keane", "Drop-in", 1],
+    ["grainne-doyle", "Grainne Doyle", "10-Class Pass", 8],
+    ["eimear-cahill", "Eimear Cahill", "Drop-in", 1],
+    ["cian-oneill", "Cian O'Neill", "10-Class Pass", 5],
+    ["dara-fitzpatrick", "Dara Fitzpatrick", "5-Class Pass", 1],
+    ["eoin-gallagher", "Eoin Gallagher", "Unlimited Monthly", null],
+    ["aoibhinn-smyth", "Aoibhinn Smyth", "Drop-in Trial", 1],
+    ["deirdre-whelan", "Deirdre Whelan", "10-Class Pass", 7],
+    ["tara-lynch", "Tara Lynch", "5-Class Pass", 2],
+    ["ronan-kavanagh", "Ronan Kavanagh", "10-Class Pass", 9],
+    ["ailbhe-connolly", "Ailbhe Connolly", "Drop-in", 1],
+  ]),
 ];
+
+type StubRow = [id: string, name: string, plan: string, credits: number | null];
+
+function stubMembers(rows: StubRow[]): Member[] {
+  return rows.map(([id, name, plan, credits]) => {
+    const status: Member["status"] =
+      credits === 0 ? "expired" : credits === 1 ? "expiring" : "active";
+
+    let activePlan: PurchaseEntry;
+    if (credits === null) {
+      activePlan = {
+        type: "unlimited",
+        product: plan,
+        startDate: "Recent",
+        classesAttendedSinceStart: 0,
+        purchaseStatus: "Active",
+      };
+    } else if (plan === "Drop-in" || plan === "Drop-in Trial") {
+      activePlan = {
+        type: "simple",
+        product: plan,
+        purchaseDate: "Recent",
+        purchaseStatus: "Active",
+      };
+    } else {
+      activePlan = {
+        type: "credit_pack",
+        product: plan,
+        purchaseDate: "Recent",
+        totalCredits: credits,
+        creditsUsed: 0,
+        creditsRemaining: credits,
+        lastUsedDate: null,
+        purchaseStatus: "Active",
+        usageLog: [],
+      };
+    }
+
+    return {
+      id,
+      name,
+      plan,
+      credits,
+      status,
+      insights: {
+        totalAttended: 0,
+        lateCancels: 0,
+        noShows: 0,
+        cancellationRate: "0%",
+        avgHoldBeforeCancel: "N/A",
+        preCutoffCancels: 0,
+        postCutoffCancels: 0,
+        behaviourScore: 100,
+        behaviourLabel: "Strong",
+        classMix: [],
+      },
+      purchaseInsights: {
+        activePlan,
+        previousPurchases: [],
+        buyerPattern: "Limited history on file",
+      },
+      opportunitySignals: [],
+      history: [],
+    };
+  });
+}

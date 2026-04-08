@@ -6,7 +6,9 @@ const upcoming = upcomingClasses.filter((c) => c.lifecycle === "upcoming");
 const completed = upcomingClasses.filter((c) => c.lifecycle === "completed");
 
 function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
-  const isFull = cls.booked >= cls.capacity;
+  const booked = cls.attendees.length;
+  const waitlistCount = cls.waitlist?.length ?? 0;
+  const isFull = booked >= cls.capacity;
   const isUpcoming = cls.lifecycle === "upcoming";
   return (
     <li>
@@ -44,10 +46,10 @@ function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
             isFull ? (muted ? "text-green-400/50" : "text-green-400") : muted ? "text-white/30" : "text-white/50"
           }`}
         >
-          {cls.booked}/{cls.capacity} booked
-          {isFull && cls.waitlistCount > 0 && (
+          {booked}/{cls.capacity} booked
+          {isFull && waitlistCount > 0 && (
             <span className={muted ? "text-white/20" : "text-white/40"}>
-              {" "}&middot; {cls.waitlistCount} on waitlist
+              {" "}&middot; {waitlistCount} on waitlist
             </span>
           )}
         </span>
