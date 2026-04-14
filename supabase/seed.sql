@@ -132,12 +132,15 @@ ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO classes (id, slug, title, instructor_name, starts_at, ends_at, capacity, location_name, cancellation_window_hours)
 VALUES
-('b0000001-0000-0000-0000-000000000001', 'reformer-mon-9',  'Reformer Pilates', 'Sarah', '2025-04-07 09:00:00+01', '2025-04-07 10:00:00+01', 12, 'Studio A', 24),
-('b0000001-0000-0000-0000-000000000002', 'spin-mon-1230',   'Spin Express',     'James', '2025-04-14 12:30:00+01', '2025-04-14 13:30:00+01', 16, 'Studio B', 24),
-('b0000001-0000-0000-0000-000000000003', 'yoga-tue-7',      'Yoga Flow',        'Aoife', '2025-04-08 07:00:00+01', '2025-04-08 08:00:00+01', 10, 'Studio A', 24),
-('b0000001-0000-0000-0000-000000000004', 'hiit-tue-1800',   'HIIT Circuit',     'Mark',  '2025-04-15 18:00:00+01', '2025-04-15 19:00:00+01', 10, 'Studio B', 2),
-('b0000001-0000-0000-0000-000000000005', 'barre-wed-10',    'Barre Tone',       'Sarah', '2025-04-16 10:00:00+01', '2025-04-16 11:00:00+01',  8, 'Studio A', 24),
-('b0000001-0000-0000-0000-000000000006', 'reformer-thu-9',  'Reformer Pilates', 'Sarah', '2025-04-17 09:00:00+01', '2025-04-17 10:00:00+01', 12, 'Studio A', 24)
+-- Completed: in the past
+('b0000001-0000-0000-0000-000000000001', 'reformer-mon-9',  'Reformer Pilates', 'Sarah', now() - interval '7 days' + time '09:00', now() - interval '7 days' + time '10:00', 12, 'Studio A', 24),
+('b0000001-0000-0000-0000-000000000003', 'yoga-tue-7',      'Yoga Flow',        'Aoife', now() - interval '6 days' + time '07:00', now() - interval '6 days' + time '08:00', 10, 'Studio A', 24),
+-- Live: happening right now
+('b0000001-0000-0000-0000-000000000002', 'spin-mon-1230',   'Spin Express',     'James', now() - interval '20 minutes', now() + interval '40 minutes', 16, 'Studio B', 24),
+-- Upcoming: in the future
+('b0000001-0000-0000-0000-000000000004', 'hiit-tue-1800',   'HIIT Circuit',     'Mark',  now() + interval '1 hour',  now() + interval '2 hours', 10, 'Studio B', 2),
+('b0000001-0000-0000-0000-000000000005', 'barre-wed-10',    'Barre Tone',       'Sarah', now() + interval '1 day' + time '10:00',  now() + interval '1 day' + time '11:00',  8, 'Studio A', 24),
+('b0000001-0000-0000-0000-000000000006', 'reformer-thu-9',  'Reformer Pilates', 'Sarah', now() + interval '2 days' + time '09:00', now() + interval '2 days' + time '10:00', 12, 'Studio A', 24)
 ON CONFLICT (id) DO NOTHING;
 
 

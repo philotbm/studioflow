@@ -69,7 +69,10 @@ function mapMemberRow(r: MemberRow): Member {
 
 type BookingJoined = BookingRow & { members: { slug: string; full_name: string } | null };
 
-function mapBookingsToAttendees(bookings: BookingJoined[]): Attendee[] {
+function mapBookingsToAttendees(
+  bookings: BookingJoined[],
+  promotionMeta: Map<string, number>,
+): Attendee[] {
   return bookings
     .filter((b) => b.booking_status !== "waitlisted" && b.is_active)
     .map((b) => {
@@ -82,13 +85,15 @@ function mapBookingsToAttendees(bookings: BookingJoined[]): Attendee[] {
         status = b.booking_status as Attendee["status"];
       }
 
+      const originalPosition = promotionMeta.get(b.id);
+
       return {
         name: b.members?.full_name ?? "Unknown",
         memberId: b.members?.slug,
         status,
         ...(b.promotion_source
           ? {
-              promotedFromPosition: (b as unknown as Record<string, unknown>)._original_position as number | undefined,
+              promotedFromPosition: originalPosition,
               promotionType: b.promotion_source as "manual" | "auto",
             }
           : {}),
@@ -110,9 +115,10 @@ function mapBookingsToWaitlist(bookings: BookingJoined[]): WaitlistEntry[] {
 function mapClassWithBookings(
   cls: ClassRow,
   bookings: BookingJoined[],
+  promotionMeta: Map<string, number>,
 ): StudioClass {
   const lifecycle = deriveLifecycle(cls.starts_at, cls.ends_at);
-  const attendees = mapBookingsToAttendees(bookings);
+  const attendees = mapBookingsToAttendees(bookings, promotionMeta);
   const waitlist = mapBookingsToWaitlist(bookings);
 
   return {
@@ -135,21 +141,38 @@ function mapClassWithBookings(
 
 // ── Read queries ────────────────────────────────────────────────────
 
+async function buildPromotionMeta(): Promise<Map<string, number>> {
+  const { data: events } = await supabase
+    .from("booking_events")
+    .select("booking_id, metadata")
+    .in("event_type", ["promoted_manual", "promoted_auto"]);
+
+  const meta = new Map<string, number>();
+  if (events) {
+    for (const e of events) {
+      if (e.booking_id && (e.metadata as Record<string, unknown>)?.original_position) {
+        meta.set(
+          e.booking_id,
+          (e.metadata as Record<string, unknown>).original_position as number,
+        );
+      }
+    }
+  }
+  return meta;
+}
+
 export async function fetchAllClasses(): Promise<StudioClass[]> {
-  const { data: classes, error: clsErr } = await supabase
-    .from("classes")
-    .select("*")
-    .order("starts_at", { ascending: true });
+  const [{ data: classes, error: clsErr }, { data: bookings, error: bkErr }, promotionMeta] =
+    await Promise.all([
+      supabase.from("classes").select("*").order("starts_at", { ascending: true }),
+      supabase.from("class_bookings").select("*, members(slug, full_name)").eq("is_active", true),
+      buildPromotionMeta(),
+    ]);
 
   if (clsErr || !classes) return [];
 
-  const { data: bookings, error: bkErr } = await supabase
-    .from("class_bookings")
-    .select("*, members(slug, full_name)")
-    .eq("is_active", true);
-
   if (bkErr || !bookings) {
-    return classes.map((c) => mapClassWithBookings(c as ClassRow, []));
+    return classes.map((c) => mapClassWithBookings(c as ClassRow, [], promotionMeta));
   }
 
   const bookingsByClass = new Map<string, BookingJoined[]>();
@@ -160,7 +183,7 @@ export async function fetchAllClasses(): Promise<StudioClass[]> {
   }
 
   return classes.map((c) =>
-    mapClassWithBookings(c as ClassRow, bookingsByClass.get(c.id) ?? []),
+    mapClassWithBookings(c as ClassRow, bookingsByClass.get(c.id) ?? [], promotionMeta),
   );
 }
 
@@ -173,13 +196,16 @@ export async function fetchClassBySlug(slug: string): Promise<StudioClass | null
 
   if (clsErr || !cls) return null;
 
-  const { data: bookings } = await supabase
-    .from("class_bookings")
-    .select("*, members(slug, full_name)")
-    .eq("class_id", cls.id)
-    .eq("is_active", true);
+  const [{ data: bookings }, promotionMeta] = await Promise.all([
+    supabase
+      .from("class_bookings")
+      .select("*, members(slug, full_name)")
+      .eq("class_id", cls.id)
+      .eq("is_active", true),
+    buildPromotionMeta(),
+  ]);
 
-  return mapClassWithBookings(cls as ClassRow, (bookings ?? []) as BookingJoined[]);
+  return mapClassWithBookings(cls as ClassRow, (bookings ?? []) as BookingJoined[], promotionMeta);
 }
 
 export async function fetchAllMembers(): Promise<Member[]> {

@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useStore, formatRelative } from "@/lib/store";
 import type { Attendee, WaitlistEntry } from "../data";
@@ -275,11 +274,12 @@ function WaitlistSection({
 // ── Audit log (from Supabase booking_events) ────────────────────────────
 function PromotionAuditLog({ classSlug }: { classSlug: string }) {
   const [events, setEvents] = useState<AuditEvent[]>([]);
-  const { getAuditEvents } = useStore();
+  const { getAuditEvents, classes } = useStore();
 
+  // Re-fetch events whenever the classes array changes (i.e. after any mutation)
   useEffect(() => {
     getAuditEvents(classSlug).then(setEvents);
-  }, [classSlug, getAuditEvents]);
+  }, [classSlug, getAuditEvents, classes]);
 
   const promotionEvents = events.filter(
     (e) =>

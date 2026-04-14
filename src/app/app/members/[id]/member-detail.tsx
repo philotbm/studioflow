@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { useMember } from "@/lib/store";
 import type {
   Member,
@@ -238,7 +237,11 @@ export default function MemberDetail({ id }: { id: string }) {
   const member = useMember(id);
 
   if (!member) {
-    notFound();
+    return (
+      <main className="mx-auto max-w-2xl pt-12 text-center">
+        <p className="text-white/40">Loading member...</p>
+      </main>
+    );
   }
 
   const status = statusLine(member);
