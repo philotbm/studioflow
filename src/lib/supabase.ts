@@ -1,20 +1,28 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+// NEXT_PUBLIC_ vars are inlined at build time by Next.js.
+// Lazy init ensures the client is created when first needed, not at import time.
 
-let supabase: SupabaseClient | null = null;
+let _client: SupabaseClient | null = null;
+let _initAttempted = false;
 
-if (supabaseUrl && supabaseAnonKey) {
-  supabase = createClient(supabaseUrl, supabaseAnonKey);
-  if (process.env.NODE_ENV === "development") {
-    console.log("[StudioFlow] Supabase client initialized:", supabaseUrl);
+export function getSupabaseClient(): SupabaseClient | null {
+  if (_initAttempted) return _client;
+  _initAttempted = true;
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+
+  if (url && key) {
+    _client = createClient(url, key);
+  } else if (typeof window !== "undefined") {
+    console.error(
+      "[StudioFlow] Supabase env vars missing.",
+      "NEXT_PUBLIC_SUPABASE_URL:", url ? "set" : "EMPTY",
+      "| NEXT_PUBLIC_SUPABASE_ANON_KEY:", key ? "set" : "EMPTY",
+      "| If you just added env vars to Vercel, trigger a redeploy.",
+    );
   }
-} else if (typeof window !== "undefined") {
-  // Client-side only — during build this is expected to be missing
-  console.error(
-    "[StudioFlow] Missing Supabase env vars. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local",
-  );
-}
 
-export { supabase };
+  return _client;
+}

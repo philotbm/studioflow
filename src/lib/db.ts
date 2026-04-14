@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+import { getSupabaseClient } from "./supabase";
 import type { MemberRow, ClassRow, BookingRow, BookingEventRow } from "./database.types";
 import type { StudioClass, Attendee, WaitlistEntry, Lifecycle } from "@/app/app/classes/data";
 import type {
@@ -11,12 +11,13 @@ import type {
 
 /** Throws if Supabase client is not initialized */
 function requireClient() {
-  if (!supabase) {
+  const client = getSupabaseClient();
+  if (!client) {
     throw new Error(
-      "Supabase client not initialized. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+      "Supabase client not initialized. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel env vars, then redeploy.",
     );
   }
-  return supabase;
+  return client;
 }
 
 // ── Lifecycle derivation (no DB column — computed from timestamps) ───
