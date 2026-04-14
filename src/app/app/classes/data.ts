@@ -35,6 +35,18 @@ export type StudioClass = {
   waitlist?: WaitlistEntry[];
 };
 
+// Seed data removed in v0.4.8 — Supabase is now the source of truth.
+// Keeping a static reference for generateStaticParams fallback.
+export const seedClassSlugs = [
+  "reformer-mon-9",
+  "spin-mon-1230",
+  "yoga-tue-7",
+  "hiit-tue-1800",
+  "barre-wed-10",
+  "reformer-thu-9",
+];
+
+/** @deprecated — use fetchAllClasses() from db.ts instead */
 export const upcomingClasses: StudioClass[] = [
   // --- Completed ---
   {

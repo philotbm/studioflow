@@ -1,9 +1,11 @@
-import { members } from "../data";
+import { seedMemberSlugs } from "../data";
 import MemberDetail from "./member-detail";
 
 export function generateStaticParams() {
-  return members.map((m) => ({ id: m.id }));
+  return seedMemberSlugs.map((slug) => ({ id: slug }));
 }
+
+export const dynamicParams = true;
 
 export default async function MemberDetailPage({
   params,

@@ -1,9 +1,12 @@
-import { upcomingClasses } from "../data";
+import { seedClassSlugs } from "../data";
 import ClassDetail from "./class-detail";
 
 export function generateStaticParams() {
-  return upcomingClasses.map((cls) => ({ id: cls.id }));
+  return seedClassSlugs.map((slug) => ({ id: slug }));
 }
+
+// Allow dynamic params beyond the static set
+export const dynamicParams = true;
 
 export default async function ClassDetailPage({
   params,

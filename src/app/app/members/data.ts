@@ -82,6 +82,14 @@ export type Member = {
   history: HistoryEvent[];
 };
 
+// Seed data removed in v0.4.8 — Supabase is now the source of truth.
+export const seedMemberSlugs = [
+  "emma-kelly", "ciara-byrne", "declan-power", "saoirse-flynn",
+  "sean-brennan", "clodagh-murray", "conor-brady", "aoife-nolan",
+  "padraig-roche", "fiona-healy",
+];
+
+/** @deprecated — use fetchAllMembers() from db.ts instead */
 export const members: Member[] = [
   {
     id: "emma-kelly",

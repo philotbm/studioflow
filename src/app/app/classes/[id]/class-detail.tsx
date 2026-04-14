@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useStore, formatRelative } from "@/lib/store";
 import type { Attendee, WaitlistEntry } from "../data";
+import type { AuditEvent } from "@/lib/db";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
 
 // ── Status labels/colours ───────────────────────────────────────────────
@@ -45,7 +47,7 @@ function AttendeeRow({
 }: {
   a: Attendee;
   classId: string;
-  onUnpromote: (classId: string, position: number) => void;
+  onUnpromote: (classSlug: string, memberSlug: string, position: number) => void;
 }) {
   const statusSpan = (
     <span className={`text-xs ${statusColor[a.status]}`}>
@@ -83,9 +85,9 @@ function AttendeeRow({
           </span>
         </div>
         <div className="flex items-center gap-3">
-          {!isAuto && (
+          {!isAuto && a.memberId && (
             <button
-              onClick={() => onUnpromote(classId, a.promotedFromPosition!)}
+              onClick={() => onUnpromote(classId, a.memberId!, a.promotedFromPosition!)}
               className="text-xs text-white/50 underline-offset-2 hover:text-white hover:underline"
             >
               Undo
@@ -132,13 +134,13 @@ function LiveAttendees({
 }: {
   classId: string;
   attendees: Attendee[];
-  onCheckIn: (classId: string, index: number) => void;
+  onCheckIn: (classSlug: string, memberSlug: string) => Promise<void>;
 }) {
   return (
     <ul className="mt-3 flex flex-col gap-2">
       {attendees.map((a, i) => (
         <li
-          key={i}
+          key={a.memberId ?? i}
           className="flex items-center justify-between rounded border border-white/10 px-4 py-2"
         >
           {a.memberId ? (
@@ -153,15 +155,17 @@ function LiveAttendees({
           )}
           {a.status === "checked_in" ? (
             <span className="text-xs text-green-400">Checked in</span>
-          ) : a.status === "not_checked_in" ? (
+          ) : a.status === "not_checked_in" && a.memberId ? (
             <button
-              onClick={() => onCheckIn(classId, i)}
+              onClick={() => onCheckIn(classId, a.memberId!)}
               className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40"
             >
               Check in
             </button>
           ) : (
-            <span className="text-xs text-white/40">{a.status}</span>
+            <span className="text-xs text-white/40">
+              {statusLabel[a.status] ?? a.status}
+            </span>
           )}
         </li>
       ))}
@@ -169,7 +173,7 @@ function LiveAttendees({
   );
 }
 
-// ── Signal pill (from waitlist-section) ─────────────────────────────────
+// ── Signal pill ─────────────────────────────────────────────────────────
 function SignalPill({ signal }: { signal: WaitlistSignal }) {
   const toneClass =
     signal.tone === "positive"
@@ -197,8 +201,8 @@ function WaitlistSection({
   classId: string;
   waitlist: WaitlistEntry[];
   canAcceptMore: boolean;
-  onPromote: (classId: string, position: number) => void;
-  getMember: (id: string) => import("@/app/app/members/data").Member | undefined;
+  onPromote: (classSlug: string, memberSlug: string) => Promise<void>;
+  getMember: (slug: string) => import("@/app/app/members/data").Member | undefined;
 }) {
   if (waitlist.length === 0) return null;
 
@@ -250,16 +254,16 @@ function WaitlistSection({
                   </div>
                 )}
               </div>
-              {canAcceptMore ? (
+              {canAcceptMore && entry.memberId ? (
                 <button
-                  onClick={() => onPromote(classId, entry.position)}
+                  onClick={() => onPromote(classId, entry.memberId!)}
                   className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40"
                 >
                   Promote
                 </button>
-              ) : (
+              ) : !canAcceptMore ? (
                 <span className="text-xs text-white/30">Class full</span>
-              )}
+              ) : null}
             </li>
           );
         })}
@@ -268,42 +272,41 @@ function WaitlistSection({
   );
 }
 
-// ── Audit log ───────────────────────────────────────────────────────────
-function PromotionAuditLog({
-  classId,
-  sourceWaitlist,
-}: {
-  classId: string;
-  sourceWaitlist: WaitlistEntry[];
-}) {
-  const { state } = useStore();
-  const forThis = state.promotionEvents.filter((e) => e.classId === classId);
-  if (forThis.length === 0) return null;
+// ── Audit log (from Supabase booking_events) ────────────────────────────
+function PromotionAuditLog({ classSlug }: { classSlug: string }) {
+  const [events, setEvents] = useState<AuditEvent[]>([]);
+  const { getAuditEvents } = useStore();
+
+  useEffect(() => {
+    getAuditEvents(classSlug).then(setEvents);
+  }, [classSlug, getAuditEvents]);
+
+  const promotionEvents = events.filter(
+    (e) =>
+      e.eventType === "promoted_manual" ||
+      e.eventType === "unpromoted" ||
+      e.eventType === "promoted_auto",
+  );
+
+  if (promotionEvents.length === 0) return null;
 
   const now = Date.now();
-  const nameFor = (position: number): string =>
-    sourceWaitlist.find((w) => w.position === position)?.name ??
-    `Waitlist #${position}`;
-
-  const sorted = [...forThis].sort((a, b) => b.at - a.at);
 
   return (
     <div className="mt-8">
       <h2 className="text-sm font-medium text-white/70">Promotion activity</h2>
       <ul className="mt-3 flex flex-col gap-2">
-        {sorted.map((ev, i) => {
-          const isPromote = ev.action === "promote";
+        {promotionEvents.map((ev) => {
+          const isPromote = ev.eventType === "promoted_manual" || ev.eventType === "promoted_auto";
           return (
             <li
-              key={`${ev.classId}-${ev.position}-${ev.at}-${i}`}
+              key={ev.id}
               className="flex items-center justify-between gap-3 rounded border border-white/10 px-4 py-2"
             >
               <div className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-sm">{nameFor(ev.position)}</span>
+                <span className="text-sm">{ev.memberName ?? "Unknown"}</span>
                 <span className="text-xs text-white/40">
-                  {isPromote
-                    ? `Promoted from waitlist #${ev.position}`
-                    : `Promotion reverted (back to waitlist #${ev.position})`}
+                  {ev.eventLabel ?? ev.eventType}
                 </span>
               </div>
               <span
@@ -311,7 +314,7 @@ function PromotionAuditLog({
                   isPromote ? "text-green-400/80" : "text-amber-400/80"
                 }`}
               >
-                {formatRelative(ev.at, now)}
+                {formatRelative(new Date(ev.createdAt).getTime(), now)}
               </span>
             </li>
           );
@@ -324,19 +327,21 @@ function PromotionAuditLog({
 // ── Page component ──────────────────────────────────────────────────────
 export default function ClassDetail({ id }: { id: string }) {
   const {
-    getClassWithPromotions,
-    getSourceClass,
+    getClass,
     getMember,
     promoteEntry,
     unpromoteEntry,
     checkInAttendee,
   } = useStore();
 
-  const cls = getClassWithPromotions(id);
-  const sourceCls = getSourceClass(id);
+  const cls = getClass(id);
 
-  if (!cls || !sourceCls) {
-    notFound();
+  if (!cls) {
+    return (
+      <main className="mx-auto max-w-2xl pt-12 text-center">
+        <p className="text-white/40">Loading class...</p>
+      </main>
+    );
   }
 
   // Upcoming classes never render "late cancel" in the roster
@@ -417,7 +422,7 @@ export default function ClassDetail({ id }: { id: string }) {
           <ul className="mt-3 flex flex-col gap-2">
             {visibleAttendees.map((a, i) => (
               <AttendeeRow
-                key={i}
+                key={a.memberId ?? i}
                 a={a}
                 classId={cls.id}
                 onUnpromote={unpromoteEntry}
@@ -437,10 +442,7 @@ export default function ClassDetail({ id }: { id: string }) {
         />
       )}
 
-      <PromotionAuditLog
-        classId={sourceCls.id}
-        sourceWaitlist={sourceCls.waitlist ?? []}
-      />
+      <PromotionAuditLog classSlug={cls.id} />
     </main>
   );
 }
