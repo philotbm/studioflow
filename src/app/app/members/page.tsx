@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMembers } from "@/lib/store";
+import { useStore } from "@/lib/store";
 import type { Member } from "./data";
 
 function creditDisplay(member: Member) {
@@ -12,7 +12,24 @@ function creditDisplay(member: Member) {
 }
 
 export default function MembersPage() {
-  const members = useMembers();
+  const { members, loading, error } = useStore();
+
+  if (loading) {
+    return (
+      <main className="mx-auto max-w-2xl pt-12 text-center">
+        <p className="text-white/40">Loading members...</p>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="mx-auto max-w-2xl pt-12 text-center">
+        <p className="text-red-400 text-sm">Failed to load data. Check configuration.</p>
+        <p className="text-white/30 text-xs mt-2">{error}</p>
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto max-w-2xl">

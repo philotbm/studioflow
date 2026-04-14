@@ -9,6 +9,16 @@ import type {
   HistoryEvent,
 } from "@/app/app/members/data";
 
+/** Throws if Supabase client is not initialized */
+function requireClient() {
+  if (!supabase) {
+    throw new Error(
+      "Supabase client not initialized. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+    );
+  }
+  return supabase;
+}
+
 // ── Lifecycle derivation (no DB column — computed from timestamps) ───
 function deriveLifecycle(startsAt: string, endsAt: string): Lifecycle {
   const now = Date.now();
@@ -142,7 +152,7 @@ function mapClassWithBookings(
 // ── Read queries ────────────────────────────────────────────────────
 
 async function buildPromotionMeta(): Promise<Map<string, number>> {
-  const { data: events } = await supabase
+  const { data: events } = await requireClient()
     .from("booking_events")
     .select("booking_id, metadata")
     .in("event_type", ["promoted_manual", "promoted_auto"]);
@@ -164,19 +174,26 @@ async function buildPromotionMeta(): Promise<Map<string, number>> {
 export async function fetchAllClasses(): Promise<StudioClass[]> {
   const [{ data: classes, error: clsErr }, { data: bookings, error: bkErr }, promotionMeta] =
     await Promise.all([
-      supabase.from("classes").select("*").order("starts_at", { ascending: true }),
-      supabase.from("class_bookings").select("*, members(slug, full_name)").eq("is_active", true),
+      requireClient().from("classes").select("*").order("starts_at", { ascending: true }),
+      requireClient().from("class_bookings").select("*, members(slug, full_name)").eq("is_active", true),
       buildPromotionMeta(),
     ]);
 
-  if (clsErr || !classes) return [];
-
-  if (bkErr || !bookings) {
-    return classes.map((c) => mapClassWithBookings(c as ClassRow, [], promotionMeta));
+  if (clsErr) {
+    console.error("[fetchAllClasses] classes query failed:", clsErr.message);
+    throw new Error(`Failed to fetch classes: ${clsErr.message}`);
+  }
+  if (!classes) {
+    throw new Error("fetchAllClasses: no classes data returned");
   }
 
+  if (bkErr) {
+    console.error("[fetchAllClasses] bookings query failed:", bkErr.message);
+  }
+
+  const allBookings = (bookings ?? []) as BookingJoined[];
   const bookingsByClass = new Map<string, BookingJoined[]>();
-  for (const b of bookings as BookingJoined[]) {
+  for (const b of allBookings) {
     const arr = bookingsByClass.get(b.class_id) ?? [];
     arr.push(b);
     bookingsByClass.set(b.class_id, arr);
@@ -188,7 +205,7 @@ export async function fetchAllClasses(): Promise<StudioClass[]> {
 }
 
 export async function fetchClassBySlug(slug: string): Promise<StudioClass | null> {
-  const { data: cls, error: clsErr } = await supabase
+  const { data: cls, error: clsErr } = await requireClient()
     .from("classes")
     .select("*")
     .eq("slug", slug)
@@ -197,7 +214,7 @@ export async function fetchClassBySlug(slug: string): Promise<StudioClass | null
   if (clsErr || !cls) return null;
 
   const [{ data: bookings }, promotionMeta] = await Promise.all([
-    supabase
+    requireClient()
       .from("class_bookings")
       .select("*, members(slug, full_name)")
       .eq("class_id", cls.id)
@@ -209,18 +226,24 @@ export async function fetchClassBySlug(slug: string): Promise<StudioClass | null
 }
 
 export async function fetchAllMembers(): Promise<Member[]> {
-  const { data, error } = await supabase
+  const { data, error } = await requireClient()
     .from("members")
     .select("*")
     .not("plan_type", "eq", "drop_in") // hide stub walk-in members
     .order("full_name", { ascending: true });
 
-  if (error || !data) return [];
+  if (error) {
+    console.error("[fetchAllMembers] query failed:", error.message);
+    throw new Error(`Failed to fetch members: ${error.message}`);
+  }
+  if (!data) {
+    throw new Error("fetchAllMembers: no data returned");
+  }
   return (data as MemberRow[]).map(mapMemberRow);
 }
 
 export async function fetchMemberBySlug(slug: string): Promise<Member | null> {
-  const { data, error } = await supabase
+  const { data, error } = await requireClient()
     .from("members")
     .select("*")
     .eq("slug", slug)
@@ -242,7 +265,7 @@ export type AuditEvent = {
 
 export async function fetchBookingEventsForClass(classSlug: string): Promise<AuditEvent[]> {
   // First get the class UUID
-  const { data: cls } = await supabase
+  const { data: cls } = await requireClient()
     .from("classes")
     .select("id")
     .eq("slug", classSlug)
@@ -250,7 +273,7 @@ export async function fetchBookingEventsForClass(classSlug: string): Promise<Aud
 
   if (!cls) return [];
 
-  const { data: events } = await supabase
+  const { data: events } = await requireClient()
     .from("booking_events")
     .select("*, members(slug, full_name)")
     .eq("class_id", cls.id)
@@ -276,8 +299,8 @@ async function resolveIds(
   memberSlug: string,
 ): Promise<{ classId: string; memberId: string } | null> {
   const [{ data: cls }, { data: mem }] = await Promise.all([
-    supabase.from("classes").select("id").eq("slug", classSlug).single(),
-    supabase.from("members").select("id").eq("slug", memberSlug).single(),
+    requireClient().from("classes").select("id").eq("slug", classSlug).single(),
+    requireClient().from("members").select("id").eq("slug", memberSlug).single(),
   ]);
   if (!cls || !mem) return null;
   return { classId: cls.id, memberId: mem.id };
@@ -289,7 +312,7 @@ async function resolveIds(
  */
 async function autoPromoteIfNeeded(classId: string): Promise<void> {
   // Check lifecycle — only auto-promote upcoming classes
-  const { data: cls } = await supabase
+  const { data: cls } = await requireClient()
     .from("classes")
     .select("capacity, starts_at, ends_at")
     .eq("id", classId)
@@ -300,7 +323,7 @@ async function autoPromoteIfNeeded(classId: string): Promise<void> {
   if (lifecycle !== "upcoming") return;
 
   // Count current booked attendees
-  const { count: bookedCount } = await supabase
+  const { count: bookedCount } = await requireClient()
     .from("class_bookings")
     .select("id", { count: "exact", head: true })
     .eq("class_id", classId)
@@ -311,7 +334,7 @@ async function autoPromoteIfNeeded(classId: string): Promise<void> {
   if ((bookedCount ?? 0) >= cls.capacity) return;
 
   // Get next waitlisted entry (lowest position)
-  const { data: nextWait } = await supabase
+  const { data: nextWait } = await requireClient()
     .from("class_bookings")
     .select("id, member_id, waitlist_position")
     .eq("class_id", classId)
@@ -324,7 +347,7 @@ async function autoPromoteIfNeeded(classId: string): Promise<void> {
   if (!nextWait) return;
 
   // Promote
-  await supabase
+  await requireClient()
     .from("class_bookings")
     .update({
       booking_status: "booked",
@@ -336,7 +359,7 @@ async function autoPromoteIfNeeded(classId: string): Promise<void> {
     .eq("id", nextWait.id);
 
   // Log event
-  await supabase.from("booking_events").insert({
+  await requireClient().from("booking_events").insert({
     class_id: classId,
     member_id: nextWait.member_id,
     booking_id: nextWait.id,
@@ -357,7 +380,7 @@ export async function promoteWaitlistEntry(
   if (!ids) return;
 
   // Find the waitlisted booking
-  const { data: booking } = await supabase
+  const { data: booking } = await requireClient()
     .from("class_bookings")
     .select("id, waitlist_position")
     .eq("class_id", ids.classId)
@@ -369,7 +392,7 @@ export async function promoteWaitlistEntry(
   if (!booking) return;
 
   // Update to booked
-  await supabase
+  await requireClient()
     .from("class_bookings")
     .update({
       booking_status: "booked",
@@ -381,7 +404,7 @@ export async function promoteWaitlistEntry(
     .eq("id", booking.id);
 
   // Log event
-  await supabase.from("booking_events").insert({
+  await requireClient().from("booking_events").insert({
     class_id: ids.classId,
     member_id: ids.memberId,
     booking_id: booking.id,
@@ -403,7 +426,7 @@ export async function unpromoteEntry(
   if (!ids) return;
 
   // Find the promoted booking
-  const { data: booking } = await supabase
+  const { data: booking } = await requireClient()
     .from("class_bookings")
     .select("id")
     .eq("class_id", ids.classId)
@@ -416,7 +439,7 @@ export async function unpromoteEntry(
   if (!booking) return;
 
   // Revert to waitlisted
-  await supabase
+  await requireClient()
     .from("class_bookings")
     .update({
       booking_status: "waitlisted",
@@ -430,7 +453,7 @@ export async function unpromoteEntry(
   // Revoke any auto-promotions that were occupying space this manual entry now vacates
   // The auto-promote will re-run and re-derive the correct state
   // First, un-auto-promote existing auto entries that are beyond capacity
-  const { data: autoEntries } = await supabase
+  const { data: autoEntries } = await requireClient()
     .from("class_bookings")
     .select("id, member_id")
     .eq("class_id", ids.classId)
@@ -439,7 +462,7 @@ export async function unpromoteEntry(
     .eq("is_active", true);
 
   // Get current class data to check if we need to revert any auto entries
-  const { data: cls } = await supabase
+  const { data: cls } = await requireClient()
     .from("classes")
     .select("capacity")
     .eq("id", ids.classId)
@@ -447,7 +470,7 @@ export async function unpromoteEntry(
 
   if (cls && autoEntries) {
     // Count non-auto booked entries
-    const { count: nonAutoCount } = await supabase
+    const { count: nonAutoCount } = await requireClient()
       .from("class_bookings")
       .select("id", { count: "exact", head: true })
       .eq("class_id", ids.classId)
@@ -456,7 +479,7 @@ export async function unpromoteEntry(
       .is("promotion_source", null);
 
     // Also count manual promotions
-    const { count: manualCount } = await supabase
+    const { count: manualCount } = await requireClient()
       .from("class_bookings")
       .select("id", { count: "exact", head: true })
       .eq("class_id", ids.classId)
@@ -472,7 +495,7 @@ export async function unpromoteEntry(
       const toRevert = autoEntries.slice(slotsForAuto);
       for (const entry of toRevert) {
         // Look up original position from booking_events
-        const { data: origEvent } = await supabase
+        const { data: origEvent } = await requireClient()
           .from("booking_events")
           .select("metadata")
           .eq("booking_id", entry.id)
@@ -483,7 +506,7 @@ export async function unpromoteEntry(
 
         const origPos = (origEvent?.metadata as Record<string, unknown>)?.original_position as number | undefined;
 
-        await supabase
+        await requireClient()
           .from("class_bookings")
           .update({
             booking_status: "waitlisted",
@@ -498,7 +521,7 @@ export async function unpromoteEntry(
   }
 
   // Log unpromote event
-  await supabase.from("booking_events").insert({
+  await requireClient().from("booking_events").insert({
     class_id: ids.classId,
     member_id: ids.memberId,
     booking_id: booking.id,
@@ -518,7 +541,7 @@ export async function checkInAttendee(
   const ids = await resolveIds(classSlug, memberSlug);
   if (!ids) return;
 
-  const { data: booking } = await supabase
+  const { data: booking } = await requireClient()
     .from("class_bookings")
     .select("id")
     .eq("class_id", ids.classId)
@@ -529,7 +552,7 @@ export async function checkInAttendee(
 
   if (!booking) return;
 
-  await supabase
+  await requireClient()
     .from("class_bookings")
     .update({
       checked_in_at: new Date().toISOString(),
@@ -537,7 +560,7 @@ export async function checkInAttendee(
     })
     .eq("id", booking.id);
 
-  await supabase.from("booking_events").insert({
+  await requireClient().from("booking_events").insert({
     class_id: ids.classId,
     member_id: ids.memberId,
     booking_id: booking.id,

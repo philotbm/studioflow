@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useClasses } from "@/lib/store";
+import { useStore } from "@/lib/store";
 import type { StudioClass } from "./data";
 
 function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
@@ -56,7 +56,24 @@ function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
 }
 
 export default function ClassesPage() {
-  const classes = useClasses();
+  const { classes, loading, error } = useStore();
+
+  if (loading) {
+    return (
+      <main className="mx-auto max-w-2xl pt-12 text-center">
+        <p className="text-white/40">Loading classes...</p>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="mx-auto max-w-2xl pt-12 text-center">
+        <p className="text-red-400 text-sm">Failed to load data. Check configuration.</p>
+        <p className="text-white/30 text-xs mt-2">{error}</p>
+      </main>
+    );
+  }
 
   const liveClasses = classes.filter((c) => c.lifecycle === "live");
   const upcoming = classes.filter((c) => c.lifecycle === "upcoming");

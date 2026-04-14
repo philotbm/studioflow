@@ -78,7 +78,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setMembers(mem);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load data");
+      const msg = e instanceof Error ? e.message : "Failed to load data";
+      console.error("[StudioFlow Store] Load failed:", msg);
+      setError(msg);
     } finally {
       setLoading(false);
       setHydrated(true);
