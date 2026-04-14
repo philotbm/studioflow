@@ -82,7 +82,7 @@ export type Member = {
   history: HistoryEvent[];
 };
 
-export const members: Member[] = [
+export const seedMembers: Member[] = [
   {
     id: "emma-kelly",
     name: "Emma Kelly",

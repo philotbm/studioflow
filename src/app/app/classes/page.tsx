@@ -1,9 +1,8 @@
-import Link from "next/link";
-import { upcomingClasses, type StudioClass } from "./data";
+"use client";
 
-const liveClasses = upcomingClasses.filter((c) => c.lifecycle === "live");
-const upcoming = upcomingClasses.filter((c) => c.lifecycle === "upcoming");
-const completed = upcomingClasses.filter((c) => c.lifecycle === "completed");
+import Link from "next/link";
+import { useClasses } from "@/lib/store";
+import type { StudioClass } from "./data";
 
 function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
   const isFull = cls.booked >= cls.capacity;
@@ -57,6 +56,12 @@ function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
 }
 
 export default function ClassesPage() {
+  const classes = useClasses();
+
+  const liveClasses = classes.filter((c) => c.lifecycle === "live");
+  const upcoming = classes.filter((c) => c.lifecycle === "upcoming");
+  const completed = classes.filter((c) => c.lifecycle === "completed");
+
   return (
     <main className="mx-auto max-w-2xl">
       <div className="flex items-center justify-between">

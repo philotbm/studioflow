@@ -24,7 +24,7 @@ export type StudioClass = {
   waitlist?: WaitlistEntry[];
 };
 
-export const upcomingClasses: StudioClass[] = [
+export const seedClasses: StudioClass[] = [
   // --- Completed ---
   {
     id: "reformer-mon-9",
