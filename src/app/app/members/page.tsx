@@ -1,5 +1,8 @@
+"use client";
+
 import Link from "next/link";
-import { members, type Member } from "./data";
+import { useMembers } from "@/lib/store";
+import type { Member } from "./data";
 
 function creditDisplay(member: Member) {
   if (member.credits === null) return { text: "Unlimited", style: "text-green-400" };
@@ -9,6 +12,8 @@ function creditDisplay(member: Member) {
 }
 
 export default function MembersPage() {
+  const members = useMembers();
+
   return (
     <main className="mx-auto max-w-2xl">
       <div className="flex items-center justify-between">

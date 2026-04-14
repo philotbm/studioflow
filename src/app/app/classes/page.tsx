@@ -1,6 +1,8 @@
+"use client";
+
 import Link from "next/link";
-import { upcomingClasses, type StudioClass } from "./data";
-import { applyPromotionsToClasses } from "./promotions";
+import { useClasses } from "@/lib/store";
+import type { StudioClass } from "./data";
 
 function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
   const isFull = cls.booked >= cls.capacity;
@@ -53,10 +55,9 @@ function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
   );
 }
 
-export default async function ClassesPage() {
-  // Apply cookie-backed promotions so the counts shown on the list match what
-  // the operator will see when they open the class detail.
-  const classes = await applyPromotionsToClasses(upcomingClasses);
+export default function ClassesPage() {
+  const classes = useClasses();
+
   const liveClasses = classes.filter((c) => c.lifecycle === "live");
   const upcoming = classes.filter((c) => c.lifecycle === "upcoming");
   const completed = classes.filter((c) => c.lifecycle === "completed");
