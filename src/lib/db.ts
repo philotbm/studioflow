@@ -50,7 +50,6 @@ function formatClassTime(startsAt: string): string {
 // ── DB → App type mappers ───────────────────────────────────────────
 
 function mapMemberRow(r: MemberRow): Member {
-  // Map DB status back to app status
   let appStatus: "active" | "expiring" | "expired";
   if (r.status === "inactive") {
     appStatus = "expired";
@@ -150,7 +149,7 @@ function mapClassWithBookings(
   };
 }
 
-// ── Read queries ────────────────────────────────────────────────────
+// ── Read queries (unchanged) ────────────────────────────────────────
 
 async function buildPromotionMeta(): Promise<Map<string, number>> {
   const { data: events } = await requireClient()
@@ -230,7 +229,7 @@ export async function fetchAllMembers(): Promise<Member[]> {
   const { data, error } = await requireClient()
     .from("members")
     .select("*")
-    .not("plan_type", "eq", "drop_in") // hide stub walk-in members
+    .not("plan_type", "eq", "drop_in")
     .order("full_name", { ascending: true });
 
   if (error) {
@@ -265,7 +264,6 @@ export type AuditEvent = {
 };
 
 export async function fetchBookingEventsForClass(classSlug: string): Promise<AuditEvent[]> {
-  // First get the class UUID
   const { data: cls } = await requireClient()
     .from("classes")
     .select("id")
@@ -293,129 +291,59 @@ export async function fetchBookingEventsForClass(classSlug: string): Promise<Aud
   }));
 }
 
-// ── Write mutations ─────────────────────────────────────────────────
+// ── Write mutations (via Postgres RPC — transactional) ──────────────
 
-async function resolveIds(
-  classSlug: string,
-  memberSlug: string,
-): Promise<{ classId: string; memberId: string } | null> {
-  const [{ data: cls }, { data: mem }] = await Promise.all([
-    requireClient().from("classes").select("id").eq("slug", classSlug).single(),
-    requireClient().from("members").select("id").eq("slug", memberSlug).single(),
-  ]);
-  if (!cls || !mem) return null;
-  return { classId: cls.id, memberId: mem.id };
+/** Helper: call an RPC function and throw on error */
+async function callRpc<T>(name: string, params: Record<string, unknown>): Promise<T> {
+  const { data, error } = await requireClient().rpc(name, params);
+  if (error) {
+    console.error(`[${name}] RPC failed:`, error.message);
+    throw new Error(`${name} failed: ${error.message}`);
+  }
+  const result = data as T & { error?: string };
+  if (result && typeof result === "object" && "error" in result && result.error) {
+    throw new Error(result.error as string);
+  }
+  return result;
 }
 
-/**
- * FIFO auto-promote: if an upcoming class has capacity, promote the
- * lowest-position waitlisted entry. Persists to class_bookings + booking_events.
- */
-async function autoPromoteIfNeeded(classId: string): Promise<void> {
-  // Check lifecycle — only auto-promote upcoming classes
-  const { data: cls } = await requireClient()
-    .from("classes")
-    .select("capacity, starts_at, ends_at")
-    .eq("id", classId)
-    .single();
+export async function bookMemberIntoClass(
+  classSlug: string,
+  memberSlug: string,
+): Promise<{ status: "booked" | "waitlisted"; alreadyExists?: boolean }> {
+  const result = await callRpc<{
+    status: string;
+    booking_id: string;
+    already_exists?: boolean;
+  }>("sf_book_member", { p_class_slug: classSlug, p_member_slug: memberSlug });
+  return {
+    status: result.status as "booked" | "waitlisted",
+    alreadyExists: result.already_exists ?? false,
+  };
+}
 
-  if (!cls) return;
-  const lifecycle = deriveLifecycle(cls.starts_at, cls.ends_at);
-  if (lifecycle !== "upcoming") return;
-
-  // Count current booked attendees
-  const { count: bookedCount } = await requireClient()
-    .from("class_bookings")
-    .select("id", { count: "exact", head: true })
-    .eq("class_id", classId)
-    .eq("is_active", true)
-    .neq("booking_status", "waitlisted")
-    .not("booking_status", "in", '("cancelled","late_cancel")');
-
-  if ((bookedCount ?? 0) >= cls.capacity) return;
-
-  // Get next waitlisted entry (lowest position)
-  const { data: nextWait } = await requireClient()
-    .from("class_bookings")
-    .select("id, member_id, waitlist_position")
-    .eq("class_id", classId)
-    .eq("booking_status", "waitlisted")
-    .eq("is_active", true)
-    .order("waitlist_position", { ascending: true })
-    .limit(1)
-    .single();
-
-  if (!nextWait) return;
-
-  // Promote
-  await requireClient()
-    .from("class_bookings")
-    .update({
-      booking_status: "booked",
-      promotion_source: "auto",
-      promoted_at: new Date().toISOString(),
-      waitlist_position: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", nextWait.id);
-
-  // Log event
-  await requireClient().from("booking_events").insert({
-    class_id: classId,
-    member_id: nextWait.member_id,
-    booking_id: nextWait.id,
-    event_type: "promoted_auto",
-    event_label: `Auto-promoted from waitlist #${nextWait.waitlist_position}`,
-    metadata: { original_position: nextWait.waitlist_position },
-  });
-
-  // Recurse — there may be more capacity
-  await autoPromoteIfNeeded(classId);
+export async function cancelBooking(
+  classSlug: string,
+  memberSlug: string,
+): Promise<{ result: "cancelled" | "late_cancel"; autoPromoted: number }> {
+  const result = await callRpc<{
+    result: string;
+    auto_promoted: number;
+  }>("sf_cancel_booking", { p_class_slug: classSlug, p_member_slug: memberSlug });
+  return {
+    result: result.result as "cancelled" | "late_cancel",
+    autoPromoted: result.auto_promoted ?? 0,
+  };
 }
 
 export async function promoteWaitlistEntry(
   classSlug: string,
   memberSlug: string,
 ): Promise<void> {
-  const ids = await resolveIds(classSlug, memberSlug);
-  if (!ids) return;
-
-  // Find the waitlisted booking
-  const { data: booking } = await requireClient()
-    .from("class_bookings")
-    .select("id, waitlist_position")
-    .eq("class_id", ids.classId)
-    .eq("member_id", ids.memberId)
-    .eq("booking_status", "waitlisted")
-    .eq("is_active", true)
-    .single();
-
-  if (!booking) return;
-
-  // Update to booked
-  await requireClient()
-    .from("class_bookings")
-    .update({
-      booking_status: "booked",
-      promotion_source: "manual",
-      promoted_at: new Date().toISOString(),
-      waitlist_position: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", booking.id);
-
-  // Log event
-  await requireClient().from("booking_events").insert({
-    class_id: ids.classId,
-    member_id: ids.memberId,
-    booking_id: booking.id,
-    event_type: "promoted_manual",
-    event_label: `Promoted from waitlist #${booking.waitlist_position}`,
-    metadata: { original_position: booking.waitlist_position },
+  await callRpc("sf_promote_member", {
+    p_class_slug: classSlug,
+    p_member_slug: memberSlug,
   });
-
-  // Check if any auto-promotions should fire
-  await autoPromoteIfNeeded(ids.classId);
 }
 
 export async function unpromoteEntry(
@@ -423,135 +351,34 @@ export async function unpromoteEntry(
   memberSlug: string,
   originalPosition: number,
 ): Promise<void> {
-  const ids = await resolveIds(classSlug, memberSlug);
-  if (!ids) return;
-
-  // Find the promoted booking
-  const { data: booking } = await requireClient()
-    .from("class_bookings")
-    .select("id")
-    .eq("class_id", ids.classId)
-    .eq("member_id", ids.memberId)
-    .eq("booking_status", "booked")
-    .eq("promotion_source", "manual")
-    .eq("is_active", true)
-    .single();
-
-  if (!booking) return;
-
-  // Revert to waitlisted
-  await requireClient()
-    .from("class_bookings")
-    .update({
-      booking_status: "waitlisted",
-      promotion_source: null,
-      promoted_at: null,
-      waitlist_position: originalPosition,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", booking.id);
-
-  // Revoke any auto-promotions that were occupying space this manual entry now vacates
-  // The auto-promote will re-run and re-derive the correct state
-  // First, un-auto-promote existing auto entries that are beyond capacity
-  const { data: autoEntries } = await requireClient()
-    .from("class_bookings")
-    .select("id, member_id")
-    .eq("class_id", ids.classId)
-    .eq("promotion_source", "auto")
-    .eq("booking_status", "booked")
-    .eq("is_active", true);
-
-  // Get current class data to check if we need to revert any auto entries
-  const { data: cls } = await requireClient()
-    .from("classes")
-    .select("capacity")
-    .eq("id", ids.classId)
-    .single();
-
-  if (cls && autoEntries) {
-    // Count non-auto booked entries
-    const { count: nonAutoCount } = await requireClient()
-      .from("class_bookings")
-      .select("id", { count: "exact", head: true })
-      .eq("class_id", ids.classId)
-      .eq("is_active", true)
-      .eq("booking_status", "booked")
-      .is("promotion_source", null);
-
-    // Also count manual promotions
-    const { count: manualCount } = await requireClient()
-      .from("class_bookings")
-      .select("id", { count: "exact", head: true })
-      .eq("class_id", ids.classId)
-      .eq("is_active", true)
-      .eq("booking_status", "booked")
-      .eq("promotion_source", "manual");
-
-    const baseBooked = (nonAutoCount ?? 0) + (manualCount ?? 0);
-    const slotsForAuto = Math.max(0, cls.capacity - baseBooked);
-
-    // If there are more auto entries than available slots, revert extras
-    if (autoEntries.length > slotsForAuto) {
-      const toRevert = autoEntries.slice(slotsForAuto);
-      for (const entry of toRevert) {
-        // Look up original position from booking_events
-        const { data: origEvent } = await requireClient()
-          .from("booking_events")
-          .select("metadata")
-          .eq("booking_id", entry.id)
-          .eq("event_type", "promoted_auto")
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .single();
-
-        const origPos = (origEvent?.metadata as Record<string, unknown>)?.original_position as number | undefined;
-
-        await requireClient()
-          .from("class_bookings")
-          .update({
-            booking_status: "waitlisted",
-            promotion_source: null,
-            promoted_at: null,
-            waitlist_position: origPos ?? 999,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", entry.id);
-      }
-    }
-  }
-
-  // Log unpromote event
-  await requireClient().from("booking_events").insert({
-    class_id: ids.classId,
-    member_id: ids.memberId,
-    booking_id: booking.id,
-    event_type: "unpromoted",
-    event_label: `Promotion reverted (back to waitlist #${originalPosition})`,
-    metadata: { original_position: originalPosition },
+  await callRpc("sf_unpromote_member", {
+    p_class_slug: classSlug,
+    p_member_slug: memberSlug,
+    p_original_position: originalPosition,
   });
-
-  // Re-run auto-promote to fill any remaining capacity
-  await autoPromoteIfNeeded(ids.classId);
 }
 
 export async function checkInAttendee(
   classSlug: string,
   memberSlug: string,
 ): Promise<void> {
-  const ids = await resolveIds(classSlug, memberSlug);
-  if (!ids) return;
+  // Simple single-row update — no concurrency concern, keep as direct query
+  const [{ data: cls }, { data: mem }] = await Promise.all([
+    requireClient().from("classes").select("id").eq("slug", classSlug).single(),
+    requireClient().from("members").select("id").eq("slug", memberSlug).single(),
+  ]);
+  if (!cls || !mem) throw new Error("Class or member not found");
 
   const { data: booking } = await requireClient()
     .from("class_bookings")
     .select("id")
-    .eq("class_id", ids.classId)
-    .eq("member_id", ids.memberId)
+    .eq("class_id", cls.id)
+    .eq("member_id", mem.id)
     .eq("booking_status", "booked")
     .eq("is_active", true)
     .single();
 
-  if (!booking) return;
+  if (!booking) throw new Error("No active booking found for check-in");
 
   await requireClient()
     .from("class_bookings")
@@ -562,8 +389,8 @@ export async function checkInAttendee(
     .eq("id", booking.id);
 
   await requireClient().from("booking_events").insert({
-    class_id: ids.classId,
-    member_id: ids.memberId,
+    class_id: cls.id,
+    member_id: mem.id,
     booking_id: booking.id,
     event_type: "checked_in",
     event_label: "Checked in",

@@ -5,7 +5,9 @@
       "Bash(npm run:*)",
       "Read(//c/Users/philj/Dubhglas/studioflow/**)",
       "Bash(gh api:*)",
-      "Bash(xargs -I{} gh api repos/philotbm/studioflow/deployments/{}/statuses --jq '.[0] | {state: .state, environment_url: .environment_url}')"
+      "Bash(xargs -I{} gh api repos/philotbm/studioflow/deployments/{}/statuses --jq '.[0] | {state: .state, environment_url: .environment_url}')",
+      "Bash(npx tsc:*)",
+      "Bash(clip)"
     ]
   }
 }

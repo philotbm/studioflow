@@ -15,6 +15,8 @@ import {
   fetchAllClasses,
   fetchAllMembers,
   fetchBookingEventsForClass,
+  bookMemberIntoClass as dbBook,
+  cancelBooking as dbCancel,
   promoteWaitlistEntry,
   unpromoteEntry as dbUnpromote,
   checkInAttendee as dbCheckIn,
@@ -52,6 +54,10 @@ type StoreContextValue = {
   promoteEntry: (classSlug: string, memberSlug: string) => Promise<void>;
   /** Unpromote a manually-promoted entry */
   unpromoteEntry: (classSlug: string, memberSlug: string, originalPosition: number) => Promise<void>;
+  /** Book a member into a class (or add to waitlist) */
+  bookMember: (classSlug: string, memberSlug: string) => Promise<{ status: "booked" | "waitlisted"; alreadyExists?: boolean }>;
+  /** Cancel a booking or remove from waitlist */
+  cancelBooking: (classSlug: string, memberSlug: string) => Promise<{ result: "cancelled" | "late_cancel" }>;
   /** Check in an attendee */
   checkInAttendee: (classSlug: string, memberSlug: string) => Promise<void>;
   /** Re-fetch all data from Supabase */
@@ -122,6 +128,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [loadData],
   );
 
+  const doBook = useCallback(
+    async (classSlug: string, memberSlug: string) => {
+      const result = await dbBook(classSlug, memberSlug);
+      await loadData();
+      return result;
+    },
+    [loadData],
+  );
+
+  const doCancel = useCallback(
+    async (classSlug: string, memberSlug: string) => {
+      const result = await dbCancel(classSlug, memberSlug);
+      await loadData();
+      return result;
+    },
+    [loadData],
+  );
+
   const doCheckIn = useCallback(
     async (classSlug: string, memberSlug: string) => {
       await dbCheckIn(classSlug, memberSlug);
@@ -140,6 +164,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       getClass,
       getMember,
       getAuditEvents,
+      bookMember: doBook,
+      cancelBooking: doCancel,
       promoteEntry,
       unpromoteEntry: doUnpromote,
       checkInAttendee: doCheckIn,
@@ -148,7 +174,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [
       classes, members, loading, error, hydrated,
       getClass, getMember, getAuditEvents,
-      promoteEntry, doUnpromote, doCheckIn, loadData,
+      doBook, doCancel, promoteEntry, doUnpromote, doCheckIn, loadData,
     ],
   );
 

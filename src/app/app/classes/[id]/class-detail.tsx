@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useStore, formatRelative } from "@/lib/store";
-import type { Attendee, WaitlistEntry } from "../data";
+import type { Attendee, WaitlistEntry, Lifecycle } from "../data";
 import type { AuditEvent } from "@/lib/db";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
 
@@ -38,16 +38,88 @@ const lifecycleStyle: Record<string, string> = {
   completed: "text-white/40 border-white/10",
 };
 
+// ── Add member control ──────────────────────────────────────────────────
+function AddMemberControl({
+  classId,
+  existingMemberIds,
+}: {
+  classId: string;
+  existingMemberIds: Set<string>;
+}) {
+  const { members, bookMember } = useStore();
+  const [selectedSlug, setSelectedSlug] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  const availableMembers = members.filter(
+    (m) => !existingMemberIds.has(m.id),
+  );
+
+  async function handleBook() {
+    if (!selectedSlug || busy) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const result = await bookMember(classId, selectedSlug);
+      if (result.alreadyExists) {
+        setFeedback("Already in this class");
+      } else {
+        setFeedback(result.status === "booked" ? "Booked" : "Added to waitlist");
+      }
+      setSelectedSlug("");
+    } catch (e) {
+      setFeedback(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setBusy(false);
+      setTimeout(() => setFeedback(null), 3000);
+    }
+  }
+
+  if (availableMembers.length === 0) return null;
+
+  return (
+    <div className="mt-3 flex items-center gap-2">
+      <select
+        value={selectedSlug}
+        onChange={(e) => setSelectedSlug(e.target.value)}
+        className="rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40"
+      >
+        <option value="">Add member...</option>
+        {availableMembers.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.name}
+          </option>
+        ))}
+      </select>
+      <button
+        onClick={handleBook}
+        disabled={!selectedSlug || busy}
+        className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40 disabled:opacity-30"
+      >
+        {busy ? "..." : "Book"}
+      </button>
+      {feedback && (
+        <span className="text-xs text-green-400/80">{feedback}</span>
+      )}
+    </div>
+  );
+}
+
 // ── Attendee row ────────────────────────────────────────────────────────
 function AttendeeRow({
   a,
   classId,
+  lifecycle,
   onUnpromote,
+  onCancel,
 }: {
   a: Attendee;
   classId: string;
+  lifecycle: Lifecycle;
   onUnpromote: (classSlug: string, memberSlug: string, position: number) => void;
+  onCancel: (classSlug: string, memberSlug: string) => Promise<unknown>;
 }) {
+  const isUpcoming = lifecycle === "upcoming";
   const statusSpan = (
     <span className={`text-xs ${statusColor[a.status]}`}>
       {statusLabel[a.status]}
@@ -84,7 +156,7 @@ function AttendeeRow({
           </span>
         </div>
         <div className="flex items-center gap-3">
-          {!isAuto && a.memberId && (
+          {!isAuto && a.memberId && isUpcoming && (
             <button
               onClick={() => onUnpromote(classId, a.memberId!, a.promotedFromPosition!)}
               className="text-xs text-white/50 underline-offset-2 hover:text-white hover:underline"
@@ -98,29 +170,32 @@ function AttendeeRow({
     );
   }
 
-  const inner = (
-    <>
-      <span className="text-sm">{a.name}</span>
-      {statusSpan}
-    </>
-  );
-
-  if (a.memberId) {
-    return (
-      <li>
-        <Link
-          href={`/app/members/${a.memberId}`}
-          className="flex items-center justify-between rounded border border-white/10 px-4 py-2 hover:border-white/25"
-        >
-          {inner}
-        </Link>
-      </li>
-    );
-  }
-
+  // Non-promoted attendee
   return (
     <li className="flex items-center justify-between rounded border border-white/10 px-4 py-2">
-      {inner}
+      <div className="flex items-center gap-2">
+        {a.memberId ? (
+          <Link
+            href={`/app/members/${a.memberId}`}
+            className="text-sm hover:underline"
+          >
+            {a.name}
+          </Link>
+        ) : (
+          <span className="text-sm">{a.name}</span>
+        )}
+      </div>
+      <div className="flex items-center gap-3">
+        {isUpcoming && a.memberId && (
+          <button
+            onClick={() => onCancel(classId, a.memberId!)}
+            className="text-xs text-white/30 underline-offset-2 hover:text-red-400 hover:underline"
+          >
+            Cancel
+          </button>
+        )}
+        {statusSpan}
+      </div>
     </li>
   );
 }
@@ -195,12 +270,14 @@ function WaitlistSection({
   waitlist,
   canAcceptMore,
   onPromote,
+  onCancel,
   getMember,
 }: {
   classId: string;
   waitlist: WaitlistEntry[];
   canAcceptMore: boolean;
   onPromote: (classSlug: string, memberSlug: string) => Promise<void>;
+  onCancel: (classSlug: string, memberSlug: string) => Promise<unknown>;
   getMember: (slug: string) => import("@/app/app/members/data").Member | undefined;
 }) {
   if (waitlist.length === 0) return null;
@@ -253,16 +330,26 @@ function WaitlistSection({
                   </div>
                 )}
               </div>
-              {canAcceptMore && entry.memberId ? (
-                <button
-                  onClick={() => onPromote(classId, entry.memberId!)}
-                  className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40"
-                >
-                  Promote
-                </button>
-              ) : !canAcceptMore ? (
-                <span className="text-xs text-white/30">Class full</span>
-              ) : null}
+              <div className="flex items-center gap-2">
+                {entry.memberId && (
+                  <button
+                    onClick={() => onCancel(classId, entry.memberId!)}
+                    className="text-xs text-white/30 underline-offset-2 hover:text-red-400 hover:underline"
+                  >
+                    Remove
+                  </button>
+                )}
+                {canAcceptMore && entry.memberId ? (
+                  <button
+                    onClick={() => onPromote(classId, entry.memberId!)}
+                    className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40"
+                  >
+                    Promote
+                  </button>
+                ) : !canAcceptMore ? (
+                  <span className="text-xs text-white/30">Class full</span>
+                ) : null}
+              </div>
             </li>
           );
         })}
@@ -271,54 +358,57 @@ function WaitlistSection({
   );
 }
 
-// ── Audit log (from Supabase booking_events) ────────────────────────────
-function PromotionAuditLog({ classSlug }: { classSlug: string }) {
+// ── Booking activity log ────────────────────────────────────────────────
+function BookingAuditLog({ classSlug }: { classSlug: string }) {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const { getAuditEvents, classes } = useStore();
 
-  // Re-fetch events whenever the classes array changes (i.e. after any mutation)
   useEffect(() => {
     getAuditEvents(classSlug).then(setEvents);
   }, [classSlug, getAuditEvents, classes]);
 
-  const promotionEvents = events.filter(
-    (e) =>
-      e.eventType === "promoted_manual" ||
-      e.eventType === "unpromoted" ||
-      e.eventType === "promoted_auto",
-  );
-
-  if (promotionEvents.length === 0) return null;
+  if (events.length === 0) return null;
 
   const now = Date.now();
 
+  function eventColor(type: string): string {
+    switch (type) {
+      case "booked":
+      case "promoted_manual":
+      case "promoted_auto":
+      case "checked_in":
+        return "text-green-400/80";
+      case "cancelled":
+      case "unpromoted":
+      case "waitlisted":
+        return "text-amber-400/80";
+      case "late_cancel":
+        return "text-red-400/80";
+      default:
+        return "text-white/40";
+    }
+  }
+
   return (
     <div className="mt-8">
-      <h2 className="text-sm font-medium text-white/70">Promotion activity</h2>
+      <h2 className="text-sm font-medium text-white/70">Booking activity</h2>
       <ul className="mt-3 flex flex-col gap-2">
-        {promotionEvents.map((ev) => {
-          const isPromote = ev.eventType === "promoted_manual" || ev.eventType === "promoted_auto";
-          return (
-            <li
-              key={ev.id}
-              className="flex items-center justify-between gap-3 rounded border border-white/10 px-4 py-2"
-            >
-              <div className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-sm">{ev.memberName ?? "Unknown"}</span>
-                <span className="text-xs text-white/40">
-                  {ev.eventLabel ?? ev.eventType}
-                </span>
-              </div>
-              <span
-                className={`shrink-0 text-xs ${
-                  isPromote ? "text-green-400/80" : "text-amber-400/80"
-                }`}
-              >
-                {formatRelative(new Date(ev.createdAt).getTime(), now)}
+        {events.map((ev) => (
+          <li
+            key={ev.id}
+            className="flex items-center justify-between gap-3 rounded border border-white/10 px-4 py-2"
+          >
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm">{ev.memberName ?? "Unknown"}</span>
+              <span className="text-xs text-white/40">
+                {ev.eventLabel ?? ev.eventType}
               </span>
-            </li>
-          );
-        })}
+            </div>
+            <span className={`shrink-0 text-xs ${eventColor(ev.eventType)}`}>
+              {formatRelative(new Date(ev.createdAt).getTime(), now)}
+            </span>
+          </li>
+        ))}
       </ul>
     </div>
   );
@@ -329,6 +419,8 @@ export default function ClassDetail({ id }: { id: string }) {
   const {
     getClass,
     getMember,
+    bookMember,
+    cancelBooking,
     promoteEntry,
     unpromoteEntry,
     checkInAttendee,
@@ -353,12 +445,21 @@ export default function ClassDetail({ id }: { id: string }) {
   const displayBooked = visibleAttendees.length;
   const isFull = displayBooked >= cls.capacity;
   const isLive = cls.lifecycle === "live";
+  const isUpcoming = cls.lifecycle === "upcoming";
 
   const nonAutoAttendeeCount = cls.attendees.filter(
     (a) => a.promotionType !== "auto",
   ).length;
-  const canAcceptMore =
-    cls.lifecycle === "upcoming" && nonAutoAttendeeCount < cls.capacity;
+  const canAcceptMore = isUpcoming && nonAutoAttendeeCount < cls.capacity;
+
+  // Collect all member IDs already in this class (attendees + waitlist)
+  const existingMemberIds = new Set<string>();
+  for (const a of cls.attendees) {
+    if (a.memberId) existingMemberIds.add(a.memberId);
+  }
+  for (const w of cls.waitlist ?? []) {
+    if (w.memberId) existingMemberIds.add(w.memberId);
+  }
 
   return (
     <main className="mx-auto max-w-2xl">
@@ -393,24 +494,30 @@ export default function ClassDetail({ id }: { id: string }) {
             </span>
           )}
         </div>
-        {cls.lifecycle === "upcoming" &&
-          cls.cancellationWindowClosed !== undefined && (
-            <p
-              className={`mt-2 text-xs ${
-                cls.cancellationWindowClosed
-                  ? "text-amber-400/80"
-                  : "text-white/40"
-              }`}
-            >
-              {cls.cancellationWindowClosed
-                ? "Cancellation window closed"
-                : "Free cancellation open"}
-            </p>
-          )}
+        {isUpcoming && cls.cancellationWindowClosed !== undefined && (
+          <p
+            className={`mt-2 text-xs ${
+              cls.cancellationWindowClosed
+                ? "text-amber-400/80"
+                : "text-white/40"
+            }`}
+          >
+            {cls.cancellationWindowClosed
+              ? "Cancellation window closed"
+              : "Free cancellation open"}
+          </p>
+        )}
       </div>
 
       <div className="mt-8">
         <h2 className="text-sm font-medium text-white/70">Attendees</h2>
+
+        {isUpcoming && (
+          <AddMemberControl
+            classId={cls.id}
+            existingMemberIds={existingMemberIds}
+          />
+        )}
 
         {isLive ? (
           <LiveAttendees
@@ -425,7 +532,9 @@ export default function ClassDetail({ id }: { id: string }) {
                 key={a.memberId ?? i}
                 a={a}
                 classId={cls.id}
+                lifecycle={cls.lifecycle}
                 onUnpromote={unpromoteEntry}
+                onCancel={cancelBooking}
               />
             ))}
           </ul>
@@ -438,11 +547,12 @@ export default function ClassDetail({ id }: { id: string }) {
           waitlist={cls.waitlist}
           canAcceptMore={canAcceptMore}
           onPromote={promoteEntry}
+          onCancel={cancelBooking}
           getMember={getMember}
         />
       )}
 
-      <PromotionAuditLog classSlug={cls.id} />
+      <BookingAuditLog classSlug={cls.id} />
     </main>
   );
 }
