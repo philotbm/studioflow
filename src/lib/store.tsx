@@ -14,7 +14,7 @@ import type { Member } from "@/app/app/members/data";
 import { upcomingClasses } from "@/app/app/classes/data";
 import { members as seedMembers } from "@/app/app/members/data";
 
-// ── Promotion types (moved from server-only promotions.ts) ──────────────
+// ── Promotion types ─────────────────────────────────────────────────────
 export type PromotionEventAction = "promote" | "unpromote";
 
 export type PromotionEvent = {
@@ -48,6 +48,40 @@ function defaultState(): StudioState {
 }
 
 // ── Defensive hydration ─────────────────────────────────────────────────
+
+function isValidClass(c: unknown): c is StudioClass {
+  if (!c || typeof c !== "object") return false;
+  const o = c as Record<string, unknown>;
+  return (
+    typeof o.id === "string" &&
+    typeof o.name === "string" &&
+    typeof o.capacity === "number" &&
+    typeof o.booked === "number" &&
+    Array.isArray(o.attendees)
+  );
+}
+
+function isValidMember(m: unknown): m is Member {
+  if (!m || typeof m !== "object") return false;
+  const o = m as Record<string, unknown>;
+  return (
+    typeof o.id === "string" &&
+    typeof o.name === "string" &&
+    typeof o.plan === "string"
+  );
+}
+
+function isValidPromotionEvent(e: unknown): e is PromotionEvent {
+  if (!e || typeof e !== "object") return false;
+  const o = e as Record<string, unknown>;
+  return (
+    typeof o.classId === "string" &&
+    typeof o.position === "number" &&
+    (o.action === "promote" || o.action === "unpromote") &&
+    typeof o.at === "number"
+  );
+}
+
 function loadFromStorage(): StudioState | null {
   if (typeof window === "undefined") return null;
   try {
@@ -56,24 +90,44 @@ function loadFromStorage(): StudioState | null {
 
     const parsed = JSON.parse(raw);
 
+    // Version guard: discard if schema has changed
     if (
       !parsed ||
       typeof parsed !== "object" ||
       parsed._version !== STORE_VERSION
     ) {
+      // Clear corrupt/outdated data
+      localStorage.removeItem(STORAGE_KEY);
       return null;
     }
 
+    // Structural checks
     if (
       !Array.isArray(parsed.classes) ||
       !Array.isArray(parsed.members) ||
       !Array.isArray(parsed.promotionEvents)
     ) {
+      localStorage.removeItem(STORAGE_KEY);
       return null;
     }
 
-    return parsed as StudioState;
+    // Validate individual entries — reject entire store if any class/member is malformed
+    if (!parsed.classes.every(isValidClass)) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    if (!parsed.members.every(isValidMember)) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+
+    // Filter out any malformed promotion events silently (append-only log can tolerate drops)
+    const validEvents = parsed.promotionEvents.filter(isValidPromotionEvent);
+
+    return { ...parsed, promotionEvents: validEvents } as StudioState;
   } catch {
+    // JSON parse error or other — clear and reseed
+    try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
     return null;
   }
 }
@@ -87,7 +141,7 @@ function saveToStorage(state: StudioState): void {
   }
 }
 
-// ── Promotion transform (pure, ported from promotions.ts) ───────────────
+// ── Promotion transform (pure) ──────────────────────────────────────────
 
 export function deriveActivePromotions(
   events: PromotionEvent[],
@@ -179,7 +233,7 @@ export function applyPromotionsToClass(
   };
 }
 
-// ── Relative time formatting (ported from promotions.ts) ────────────────
+// ── Relative time formatting ────────────────────────────────────────────
 export function formatRelative(atMs: number, nowMs: number = Date.now()): string {
   const deltaMs = Math.max(0, nowMs - atMs);
   const s = Math.floor(deltaMs / 1000);
@@ -193,6 +247,16 @@ export function formatRelative(atMs: number, nowMs: number = Date.now()): string
   return `${d}d ago`;
 }
 
+// ── Prune stale promotion events ────────────────────────────────────────
+// Remove events that reference classes no longer in the store (e.g. after
+// a reseed or schema migration). Keeps the event log from growing unbounded.
+function pruneStaleEvents(
+  events: PromotionEvent[],
+  classIds: Set<string>,
+): PromotionEvent[] {
+  return events.filter((e) => classIds.has(e.classId));
+}
+
 // ── Context ─────────────────────────────────────────────────────────────
 type StoreContextValue = {
   state: StudioState;
@@ -202,6 +266,8 @@ type StoreContextValue = {
   getClassWithPromotions: (id: string) => StudioClass | undefined;
   /** Raw source class (for audit log name resolution) */
   getSourceClass: (id: string) => StudioClass | undefined;
+  /** Get a member by id from the persistent store */
+  getMember: (id: string) => Member | undefined;
   /** Promote a waitlist entry */
   promoteEntry: (classId: string, position: number) => void;
   /** Unpromote a waitlist entry */
@@ -226,7 +292,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const stored = loadFromStorage();
     if (stored) {
-      setState(stored);
+      // Prune stale promotion events on load
+      const classIds = new Set(stored.classes.map((c) => c.id));
+      const pruned = pruneStaleEvents(stored.promotionEvents, classIds);
+      if (pruned.length !== stored.promotionEvents.length) {
+        setState({ ...stored, promotionEvents: pruned });
+      } else {
+        setState(stored);
+      }
     }
     setHydrated(true);
   }, []);
@@ -257,6 +330,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const getSourceClass = useCallback(
     (id: string) => state.classes.find((c) => c.id === id),
     [state.classes],
+  );
+
+  const getMember = useCallback(
+    (id: string) => state.members.find((m) => m.id === id),
+    [state.members],
   );
 
   const promoteEntry = useCallback(
@@ -338,6 +416,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       classesWithPromotions,
       getClassWithPromotions,
       getSourceClass,
+      getMember,
       promoteEntry,
       unpromoteEntry,
       checkInAttendee,
@@ -350,6 +429,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       classesWithPromotions,
       getClassWithPromotions,
       getSourceClass,
+      getMember,
       promoteEntry,
       unpromoteEntry,
       checkInAttendee,

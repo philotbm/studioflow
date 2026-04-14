@@ -4,7 +4,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { useStore, formatRelative } from "@/lib/store";
 import type { Attendee, WaitlistEntry } from "../data";
-import { members } from "../../members/data";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
 
 // ── Status labels/colours ───────────────────────────────────────────────
@@ -193,11 +192,13 @@ function WaitlistSection({
   waitlist,
   canAcceptMore,
   onPromote,
+  getMember,
 }: {
   classId: string;
   waitlist: WaitlistEntry[];
   canAcceptMore: boolean;
   onPromote: (classId: string, position: number) => void;
+  getMember: (id: string) => import("@/app/app/members/data").Member | undefined;
 }) {
   if (waitlist.length === 0) return null;
 
@@ -210,7 +211,7 @@ function WaitlistSection({
       <ol className="mt-3 flex flex-col gap-2">
         {waitlist.map((entry, index) => {
           const member = entry.memberId
-            ? members.find((m) => m.id === entry.memberId)
+            ? getMember(entry.memberId)
             : undefined;
           const signals = waitlistSignalsFor(member);
           const isNextUp = index === 0;
@@ -325,6 +326,7 @@ export default function ClassDetail({ id }: { id: string }) {
   const {
     getClassWithPromotions,
     getSourceClass,
+    getMember,
     promoteEntry,
     unpromoteEntry,
     checkInAttendee,
@@ -431,6 +433,7 @@ export default function ClassDetail({ id }: { id: string }) {
           waitlist={cls.waitlist}
           canAcceptMore={canAcceptMore}
           onPromote={promoteEntry}
+          getMember={getMember}
         />
       )}
 
