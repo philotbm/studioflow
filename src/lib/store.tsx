@@ -22,6 +22,7 @@ import {
   checkInAttendee as dbCheckIn,
   type AuditEvent,
 } from "./db";
+import { eligibilityFor, type EligibilityResult } from "./eligibility";
 
 // ── Relative time formatting ────────────────────────────────────────────
 export function formatRelative(atMs: number, nowMs: number = Date.now()): string {
@@ -38,6 +39,16 @@ export function formatRelative(atMs: number, nowMs: number = Date.now()): string
 }
 
 // ── Context ─────────────────────────────────────────────────────────────
+/**
+ * Result of a bookMember call. A successful call resolves to "booked" or
+ * "waitlisted"; a call blocked by the v0.6.0 eligibility engine resolves to
+ * "blocked" with the full EligibilityResult so the UI can show the reason.
+ */
+export type BookMemberResult =
+  | { status: "booked"; alreadyExists?: boolean }
+  | { status: "waitlisted"; alreadyExists?: boolean }
+  | { status: "blocked"; eligibility: EligibilityResult };
+
 type StoreContextValue = {
   classes: StudioClass[];
   members: Member[];
@@ -54,8 +65,8 @@ type StoreContextValue = {
   promoteEntry: (classSlug: string, memberSlug: string) => Promise<void>;
   /** Unpromote a manually-promoted entry */
   unpromoteEntry: (classSlug: string, memberSlug: string, originalPosition: number) => Promise<void>;
-  /** Book a member into a class (or add to waitlist) */
-  bookMember: (classSlug: string, memberSlug: string) => Promise<{ status: "booked" | "waitlisted"; alreadyExists?: boolean }>;
+  /** Book a member into a class (or add to waitlist). Runs eligibility engine first. */
+  bookMember: (classSlug: string, memberSlug: string) => Promise<BookMemberResult>;
   /** Cancel a booking or remove from waitlist */
   cancelBooking: (classSlug: string, memberSlug: string) => Promise<{ result: "cancelled" | "late_cancel" }>;
   /** Check in an attendee */
@@ -129,12 +140,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   const doBook = useCallback(
-    async (classSlug: string, memberSlug: string) => {
+    async (classSlug: string, memberSlug: string): Promise<BookMemberResult> => {
+      // v0.6.0 Economic Engine Foundation — economic gate before capacity gate.
+      // The eligibility engine is the single truth-source; if it says "no",
+      // we never reach the DB RPC and the class is left untouched. If the
+      // member slug isn't found locally we fall through — the RPC will
+      // return a structured "Member not found" error which the caller
+      // already handles as a thrown Error.
+      const member = members.find((m) => m.id === memberSlug);
+      if (member) {
+        const eligibility = eligibilityFor(member);
+        if (!eligibility.canBook) {
+          return { status: "blocked", eligibility };
+        }
+      }
       const result = await dbBook(classSlug, memberSlug);
       await loadData();
       return result;
     },
-    [loadData],
+    [loadData, members],
   );
 
   const doCancel = useCallback(

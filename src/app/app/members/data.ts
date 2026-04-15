@@ -70,10 +70,18 @@ export type OpportunitySignal = {
   tone: "positive" | "neutral" | "attention";
 };
 
+/**
+ * Top-level entitlement category driving the booking eligibility engine.
+ * Mirrors the `plan_type` column on the `members` table.
+ */
+export type PlanType = "unlimited" | "class_pack" | "trial" | "drop_in";
+
 export type Member = {
   id: string;
   name: string;
   plan: string;
+  /** Foundation field introduced in v0.6.0 — drives the eligibility engine. */
+  planType: PlanType;
   credits: number | null;
   status: "active" | "expiring" | "expired";
   insights: MemberInsights;
@@ -95,6 +103,7 @@ export const members: Member[] = [
     id: "emma-kelly",
     name: "Emma Kelly",
     plan: "Unlimited Monthly",
+    planType: "unlimited",
     credits: null,
     status: "active",
     insights: {
@@ -159,6 +168,7 @@ export const members: Member[] = [
     id: "ciara-byrne",
     name: "Ciara Byrne",
     plan: "10-Class Pass",
+    planType: "class_pack",
     credits: 7,
     status: "active",
     insights: {
@@ -211,6 +221,7 @@ export const members: Member[] = [
     id: "declan-power",
     name: "Declan Power",
     plan: "Unlimited Monthly",
+    planType: "unlimited",
     credits: null,
     status: "active",
     insights: {
@@ -252,6 +263,7 @@ export const members: Member[] = [
     id: "saoirse-flynn",
     name: "Saoirse Flynn",
     plan: "5-Class Pass",
+    planType: "class_pack",
     credits: 1,
     status: "expiring",
     insights: {
@@ -306,6 +318,7 @@ export const members: Member[] = [
     id: "sean-brennan",
     name: "Sean Brennan",
     plan: "10-Class Pass",
+    planType: "class_pack",
     credits: 4,
     status: "active",
     insights: {
@@ -362,6 +375,7 @@ export const members: Member[] = [
     id: "clodagh-murray",
     name: "Clodagh Murray",
     plan: "Unlimited Monthly",
+    planType: "unlimited",
     credits: null,
     status: "active",
     insights: {
@@ -402,6 +416,7 @@ export const members: Member[] = [
     id: "conor-brady",
     name: "Conor Brady",
     plan: "5-Class Pass",
+    planType: "class_pack",
     credits: 0,
     status: "expired",
     insights: {
@@ -459,6 +474,7 @@ export const members: Member[] = [
     id: "aoife-nolan",
     name: "Aoife Nolan",
     plan: "Drop-in Trial",
+    planType: "trial",
     credits: 1,
     status: "active",
     insights: {
@@ -494,6 +510,7 @@ export const members: Member[] = [
     id: "padraig-roche",
     name: "Padraig Roche",
     plan: "10-Class Pass",
+    planType: "class_pack",
     credits: 10,
     status: "active",
     insights: {
@@ -535,6 +552,7 @@ export const members: Member[] = [
     id: "fiona-healy",
     name: "Fiona Healy",
     plan: "5-Class Pass",
+    planType: "class_pack",
     credits: 3,
     status: "active",
     insights: {
