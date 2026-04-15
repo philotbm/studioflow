@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useMember } from "@/lib/store";
-import { eligibilityFor } from "@/lib/eligibility";
+import { useEffect, useState } from "react";
+import { useMember, useStore, formatRelative } from "@/lib/store";
+import type { LedgerEntry, ManualAdjustReason } from "@/lib/db";
+import { MANUAL_ADJUST_REASONS } from "@/lib/db";
 import type {
   Member,
   MemberInsights,
@@ -12,17 +14,197 @@ import type {
 
 // --- Helpers ---
 
-function statusLine(member: Member): { label: string; style: string } {
-  if (member.credits === null) {
-    return { label: "Active", style: "text-green-400" };
+/**
+ * Small display-only helper. v0.8.0 separates three dimensions cleanly:
+ *   - account lifecycle (`member.accountStatus`)
+ *   - credit balance (`member.credits`)
+ *   - booking access (`member.bookingAccess`, server-derived)
+ *
+ * This helper only dresses up the raw account lifecycle string; it does
+ * NOT encode any booking rules — that's the DB's job via
+ * v_members_with_access.
+ */
+function accountLine(member: Member): { label: string; style: string } {
+  switch (member.accountStatus) {
+    case "active":
+      return { label: "Active", style: "text-green-400" };
+    case "paused":
+      return { label: "Paused", style: "text-amber-400" };
+    case "inactive":
+      return { label: "Inactive", style: "text-red-400" };
   }
-  if (member.credits === 0) {
-    return { label: "No credits remaining", style: "text-red-400" };
+}
+
+const ADJUST_REASON_LABELS: Record<ManualAdjustReason, string> = {
+  bereavement: "Bereavement",
+  medical: "Medical issue",
+  studio_error: "Studio error",
+  goodwill: "Goodwill",
+  admin_correction: "Admin correction",
+  service_recovery: "Service recovery",
+};
+
+const LEDGER_REASON_LABELS: Record<string, string> = {
+  booking: "Booking",
+  cancel_refund: "Cancellation refund",
+  auto_promotion: "Auto-promotion",
+  manual_promotion: "Manual promotion",
+  unpromote_refund: "Unpromote refund",
+  bereavement: "Adj · Bereavement",
+  medical: "Adj · Medical",
+  studio_error: "Adj · Studio error",
+  goodwill: "Adj · Goodwill",
+  admin_correction: "Adj · Admin correction",
+  service_recovery: "Adj · Service recovery",
+};
+
+function ManualAdjustControl({ memberSlug, canAdjust }: { memberSlug: string; canAdjust: boolean }) {
+  const { adjustCredit } = useStore();
+  const [delta, setDelta] = useState("1");
+  const [reason, setReason] = useState<ManualAdjustReason>("goodwill");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<
+    | { kind: "ok"; text: string }
+    | { kind: "error"; text: string }
+    | null
+  >(null);
+
+  if (!canAdjust) {
+    return (
+      <p className="text-xs text-white/40">
+        Credit adjustments are only available for class pack and trial members.
+      </p>
+    );
   }
-  if (member.credits === 1) {
-    return { label: "1 credit remaining", style: "text-amber-400" };
+
+  async function handleSubmit() {
+    const n = Number(delta);
+    if (!Number.isFinite(n) || n === 0) {
+      setFeedback({ kind: "error", text: "Delta must be a non-zero number" });
+      return;
+    }
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await adjustCredit(memberSlug, n, reason, note.trim() || null);
+      setFeedback({
+        kind: "ok",
+        text: `Applied ${n > 0 ? "+" : ""}${n} · balance now ${res.balanceAfter}`,
+      });
+      setDelta("1");
+      setNote("");
+    } catch (e) {
+      setFeedback({
+        kind: "error",
+        text: e instanceof Error ? e.message : "Adjustment failed",
+      });
+    } finally {
+      setBusy(false);
+    }
   }
-  return { label: `${member.credits} credits remaining`, style: "text-white/60" };
+
+  const fbColor =
+    feedback?.kind === "error" ? "text-red-400/90" : "text-green-400/80";
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="number"
+          value={delta}
+          onChange={(e) => setDelta(e.target.value)}
+          className="w-16 rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40"
+          aria-label="Delta"
+        />
+        <select
+          value={reason}
+          onChange={(e) => setReason(e.target.value as ManualAdjustReason)}
+          className="rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40"
+          aria-label="Reason code"
+        >
+          {MANUAL_ADJUST_REASONS.map((r) => (
+            <option key={r} value={r}>
+              {ADJUST_REASON_LABELS[r]}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Optional note"
+          className="min-w-[10rem] flex-1 rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40"
+          aria-label="Note"
+        />
+        <button
+          onClick={handleSubmit}
+          disabled={busy}
+          className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40 disabled:opacity-30"
+        >
+          {busy ? "..." : "Apply"}
+        </button>
+      </div>
+      {feedback && <span className={`text-xs ${fbColor}`}>{feedback.text}</span>}
+      <p className="text-[11px] text-white/30">
+        Reason code is required. Use positive delta to add credits, negative
+        to remove. Every adjustment writes a row to the credit ledger.
+      </p>
+    </div>
+  );
+}
+
+function RecentLedgerPanel({ memberSlug }: { memberSlug: string }) {
+  const { getLedger, members } = useStore();
+  const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getLedger(memberSlug, 8).then((rows) => {
+      if (!cancelled) setEntries(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Re-fetch whenever the members collection updates (i.e. after a
+    // book/cancel/adjust) so the ledger reflects fresh state.
+  }, [getLedger, memberSlug, members]);
+
+  if (!entries) return null;
+  if (entries.length === 0) {
+    return <p className="text-xs text-white/40">No credit ledger activity yet.</p>;
+  }
+  const now = Date.now();
+  return (
+    <ul className="flex flex-col gap-2">
+      {entries.map((e) => {
+        const label = LEDGER_REASON_LABELS[e.reasonCode] ?? e.reasonCode;
+        const deltaColor = e.delta > 0 ? "text-green-400" : "text-amber-400";
+        return (
+          <li
+            key={e.id}
+            className="flex items-center justify-between gap-3 rounded border border-white/10 px-4 py-2"
+          >
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm">{label}</span>
+              <span className="text-[11px] text-white/30">
+                {e.source === "operator" ? "Operator · " : "System · "}
+                {e.note ?? "—"}
+              </span>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-0.5">
+              <span className={`text-sm font-semibold ${deltaColor}`}>
+                {e.delta > 0 ? `+${e.delta}` : e.delta}
+              </span>
+              <span className="text-[11px] text-white/30">
+                bal {e.balanceAfter} · {formatRelative(new Date(e.createdAt).getTime(), now)}
+              </span>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 function behaviourColor(label: string): string {
@@ -245,13 +427,13 @@ export default function MemberDetail({ id }: { id: string }) {
     );
   }
 
-  const status = statusLine(member);
+  const account = accountLine(member);
+  const access = member.bookingAccess; // v0.8.0: server-derived truth
   const ins = member.insights;
   const pi = member.purchaseInsights;
   const reasons = reliabilityReasons(ins);
   const impact = revenueImpact(ins);
-  // v0.6.0 — shared eligibility engine drives the access summary.
-  const eligibility = eligibilityFor(member);
+  const canAdjust = member.planType === "class_pack" || member.planType === "trial";
 
   return (
     <main className="mx-auto max-w-2xl">
@@ -271,18 +453,22 @@ export default function MemberDetail({ id }: { id: string }) {
             <dd className="text-white/80">{member.plan}</dd>
           </div>
           <div className="flex gap-2">
-            <dt className="text-white/40">Status</dt>
-            <dd className={status.style}>{status.label}</dd>
+            <dt className="text-white/40">Account</dt>
+            <dd className={account.style}>{account.label}</dd>
           </div>
+          {member.credits !== null && (
+            <div className="flex gap-2">
+              <dt className="text-white/40">Credits</dt>
+              <dd className="text-white/80">{member.credits}</dd>
+            </div>
+          )}
         </dl>
       </div>
 
-      {/* Access summary — v0.6.0 Economic Engine */}
+      {/* Booking access — server-derived via v_members_with_access */}
       <div
         className={`mt-6 rounded border px-4 py-3 ${
-          eligibility.canBook
-            ? "border-green-400/20"
-            : "border-amber-400/30"
+          access.canBook ? "border-green-400/20" : "border-amber-400/30"
         }`}
       >
         <div className="flex items-center justify-between gap-3">
@@ -291,34 +477,53 @@ export default function MemberDetail({ id }: { id: string }) {
           </span>
           <span
             className={`rounded-full border px-2 py-0.5 text-[11px] ${
-              eligibility.canBook
+              access.canBook
                 ? "border-green-400/30 text-green-400"
                 : "border-amber-400/30 text-amber-400"
             }`}
           >
-            {eligibility.canBook ? "Can book" : "Blocked"}
+            {access.canBook ? "Can book" : "Blocked"}
           </span>
         </div>
         <p
           className={`mt-2 text-sm font-medium ${
-            eligibility.canBook ? "text-white/90" : "text-amber-400/90"
+            access.canBook ? "text-white/90" : "text-amber-400/90"
           }`}
         >
-          {eligibility.reason}
+          {access.reason}
         </p>
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/50">
           <span>
             <span className="text-white/30">Entitlement:</span>{" "}
-            {eligibility.entitlementLabel}
+            {access.entitlementLabel}
           </span>
-          {eligibility.creditsRemaining !== null && (
+          {access.creditsRemaining !== null && (
             <span>
               <span className="text-white/30">Credits left:</span>{" "}
-              {eligibility.creditsRemaining}
+              {access.creditsRemaining}
             </span>
           )}
+          <span className="text-white/30">code: {access.statusCode}</span>
         </div>
-        <p className="mt-2 text-xs text-white/40">{eligibility.actionHint}</p>
+        <p className="mt-2 text-xs text-white/40">{access.actionHint}</p>
+      </div>
+
+      {/* Manual credit adjustment — v0.8.0 */}
+      <div className="mt-6 rounded border border-white/10 px-4 py-3">
+        <span className="text-xs uppercase tracking-wide text-white/40">
+          Manual credit adjustment
+        </span>
+        <div className="mt-3">
+          <ManualAdjustControl memberSlug={member.id} canAdjust={canAdjust} />
+        </div>
+      </div>
+
+      {/* Recent credit ledger — v0.8.0 */}
+      <div className="mt-6">
+        <h2 className="text-sm font-medium text-white/70">Recent credit ledger</h2>
+        <div className="mt-3">
+          <RecentLedgerPanel memberSlug={member.id} />
+        </div>
       </div>
 
       {/* Opportunity signals */}

@@ -71,19 +71,56 @@ export type OpportunitySignal = {
 };
 
 /**
- * Top-level entitlement category driving the booking eligibility engine.
+ * Top-level entitlement category driving booking access.
  * Mirrors the `plan_type` column on the `members` table.
  */
 export type PlanType = "unlimited" | "class_pack" | "trial" | "drop_in";
+
+/**
+ * Lifecycle/account status — the raw DB column. Nothing about balance
+ * state lives here; balance is `credits` and booking access is
+ * `bookingAccess`. These three dimensions are kept deliberately separate
+ * after the v0.8.0 status-semantics cleanup.
+ */
+export type AccountStatus = "active" | "paused" | "inactive";
+
+/**
+ * Stable, machine-readable booking access code from the DB truth source.
+ * Exhaustive — any new case must be added to `sf_check_eligibility` in
+ * supabase/functions.sql first, then surfaced here.
+ */
+export type BookingAccessStatus =
+  | "ok"
+  | "account_inactive"
+  | "no_credits"
+  | "trial_used"
+  | "no_entitlement"
+  | "not_found";
+
+/**
+ * Server-derived booking access state. The DB is the only place these
+ * rules live (see `sf_check_eligibility` and `v_members_with_access`);
+ * this type is only a transport shape for the client.
+ */
+export type BookingAccess = {
+  canBook: boolean;
+  reason: string;
+  entitlementLabel: string;
+  creditsRemaining: number | null;
+  actionHint: string;
+  statusCode: BookingAccessStatus;
+};
 
 export type Member = {
   id: string;
   name: string;
   plan: string;
-  /** Foundation field introduced in v0.6.0 — drives the eligibility engine. */
   planType: PlanType;
   credits: number | null;
-  status: "active" | "expiring" | "expired";
+  /** Raw lifecycle status from the DB — no balance or entitlement state blended in. */
+  accountStatus: AccountStatus;
+  /** Server-truth booking access — derived by sf_check_eligibility, transported via v_members_with_access. */
+  bookingAccess: BookingAccess;
   insights: MemberInsights;
   purchaseInsights: PurchaseInsights;
   opportunitySignals: OpportunitySignal[];
@@ -95,506 +132,4 @@ export const seedMemberSlugs = [
   "emma-kelly", "ciara-byrne", "declan-power", "saoirse-flynn",
   "sean-brennan", "clodagh-murray", "conor-brady", "aoife-nolan",
   "padraig-roche", "fiona-healy",
-];
-
-/** @deprecated — use fetchAllMembers() from db.ts instead */
-export const members: Member[] = [
-  {
-    id: "emma-kelly",
-    name: "Emma Kelly",
-    plan: "Unlimited Monthly",
-    planType: "unlimited",
-    credits: null,
-    status: "active",
-    insights: {
-      totalAttended: 4,
-      lateCancels: 1,
-      noShows: 1,
-      cancellationRate: "17%",
-      avgHoldBeforeCancel: "4 hours",
-      preCutoffCancels: 0,
-      postCutoffCancels: 1,
-      behaviourScore: 72,
-      behaviourLabel: "Mixed",
-      classMix: [
-        { label: "Reformer Pilates", count: 2 },
-        { label: "Yoga Flow", count: 1 },
-        { label: "Barre Tone", count: 1 },
-      ],
-    },
-    purchaseInsights: {
-      activePlan: {
-        type: "unlimited",
-        product: "Unlimited Monthly",
-        startDate: "1 Apr",
-        classesAttendedSinceStart: 2,
-        purchaseStatus: "Active",
-      },
-      previousPurchases: [
-        {
-          type: "credit_pack",
-          product: "10-Class Pass",
-          purchaseDate: "15 Mar",
-          totalCredits: 10,
-          creditsUsed: 10,
-          creditsRemaining: 0,
-          lastUsedDate: "31 Mar",
-          purchaseStatus: "Consumed",
-          usageLog: [
-            { className: "Spin Express", date: "10 Mar" },
-            { className: "Barre Tone", date: "31 Mar" },
-          ],
-        },
-      ],
-      buyerPattern: "Moved from packs to unlimited",
-    },
-    opportunitySignals: [
-      { label: "Upgrade success", detail: "Converted from class pack to unlimited — retain with good experience", tone: "positive" },
-      { label: "Needs attention", detail: "No-show and late cancel history — monitor for churn risk", tone: "attention" },
-    ],
-    history: [
-      { date: "10 Apr", event: "Reformer Pilates — Thu 09:00", type: "upcoming" },
-      { date: "7 Apr", event: "Reformer Pilates — Mon 09:00", type: "attended" },
-      { date: "3 Apr", event: "Yoga Flow — Thu 07:00", type: "attended" },
-      { date: "1 Apr", event: "Started Unlimited Monthly", type: "started" },
-      { date: "31 Mar", event: "Barre Tone — Mon 10:00", type: "attended" },
-      { date: "28 Mar", event: "Reformer Pilates — Fri 09:00", type: "late_cancel" },
-      { date: "15 Mar", event: "Purchased 10-Class Pass", type: "purchase" },
-      { date: "10 Mar", event: "Spin Express — Mon 12:30", type: "attended" },
-      { date: "3 Mar", event: "Yoga Flow — Mon 07:00", type: "no_show" },
-    ],
-  },
-  {
-    id: "ciara-byrne",
-    name: "Ciara Byrne",
-    plan: "10-Class Pass",
-    planType: "class_pack",
-    credits: 7,
-    status: "active",
-    insights: {
-      totalAttended: 3,
-      lateCancels: 0,
-      noShows: 0,
-      cancellationRate: "0%",
-      avgHoldBeforeCancel: "N/A",
-      preCutoffCancels: 0,
-      postCutoffCancels: 0,
-      behaviourScore: 98,
-      behaviourLabel: "Strong",
-      classMix: [
-        { label: "Reformer Pilates", count: 1 },
-        { label: "Yoga Flow", count: 1 },
-        { label: "Spin Express", count: 1 },
-      ],
-    },
-    purchaseInsights: {
-      activePlan: {
-        type: "credit_pack",
-        product: "10-Class Pass",
-        purchaseDate: "25 Mar",
-        totalCredits: 10,
-        creditsUsed: 3,
-        creditsRemaining: 7,
-        lastUsedDate: "7 Apr",
-        purchaseStatus: "Active",
-        usageLog: [
-          { className: "Spin Express", date: "1 Apr" },
-          { className: "Yoga Flow", date: "4 Apr" },
-          { className: "Reformer Pilates", date: "7 Apr" },
-        ],
-      },
-      previousPurchases: [],
-      buyerPattern: "First-time class pack buyer",
-    },
-    opportunitySignals: [
-      { label: "Reliable regular", detail: "Strong attendance, zero cancellations — ideal member", tone: "positive" },
-      { label: "Upgrade candidate", detail: "High usage rate on class pack — may benefit from unlimited", tone: "positive" },
-    ],
-    history: [
-      { date: "7 Apr", event: "Reformer Pilates — Mon 09:00", type: "attended" },
-      { date: "4 Apr", event: "Yoga Flow — Fri 07:00", type: "attended" },
-      { date: "1 Apr", event: "Spin Express — Tue 12:30", type: "attended" },
-      { date: "25 Mar", event: "Purchased 10-Class Pass", type: "purchase" },
-    ],
-  },
-  {
-    id: "declan-power",
-    name: "Declan Power",
-    plan: "Unlimited Monthly",
-    planType: "unlimited",
-    credits: null,
-    status: "active",
-    insights: {
-      totalAttended: 2,
-      lateCancels: 0,
-      noShows: 0,
-      cancellationRate: "0%",
-      avgHoldBeforeCancel: "N/A",
-      preCutoffCancels: 0,
-      postCutoffCancels: 0,
-      behaviourScore: 100,
-      behaviourLabel: "Strong",
-      classMix: [
-        { label: "Spin Express", count: 1 },
-        { label: "HIIT Circuit", count: 1 },
-      ],
-    },
-    purchaseInsights: {
-      activePlan: {
-        type: "unlimited",
-        product: "Unlimited Monthly",
-        startDate: "1 Apr",
-        classesAttendedSinceStart: 2,
-        purchaseStatus: "Active",
-      },
-      previousPurchases: [],
-      buyerPattern: "New unlimited member",
-    },
-    opportunitySignals: [
-      { label: "Under-using unlimited", detail: "Only 2 classes since starting unlimited — encourage more bookings", tone: "attention" },
-    ],
-    history: [
-      { date: "7 Apr", event: "Spin Express — Mon 12:30", type: "attended" },
-      { date: "3 Apr", event: "HIIT Circuit — Thu 18:00", type: "attended" },
-      { date: "1 Apr", event: "Started Unlimited Monthly", type: "started" },
-    ],
-  },
-  {
-    id: "saoirse-flynn",
-    name: "Saoirse Flynn",
-    plan: "5-Class Pass",
-    planType: "class_pack",
-    credits: 1,
-    status: "expiring",
-    insights: {
-      totalAttended: 3,
-      lateCancels: 1,
-      noShows: 0,
-      cancellationRate: "25%",
-      avgHoldBeforeCancel: "2 hours",
-      preCutoffCancels: 1,
-      postCutoffCancels: 0,
-      behaviourScore: 80,
-      behaviourLabel: "Mixed",
-      classMix: [
-        { label: "Yoga Flow", count: 1 },
-        { label: "Barre Tone", count: 1 },
-        { label: "Reformer Pilates", count: 1 },
-      ],
-    },
-    purchaseInsights: {
-      activePlan: {
-        type: "credit_pack",
-        product: "5-Class Pass",
-        purchaseDate: "15 Mar",
-        totalCredits: 5,
-        creditsUsed: 4,
-        creditsRemaining: 1,
-        lastUsedDate: "2 Apr",
-        purchaseStatus: "Active",
-        usageLog: [
-          { className: "Reformer Pilates", date: "24 Mar" },
-          { className: "Yoga Flow", date: "28 Mar" },
-          { className: "Barre Tone", date: "2 Apr" },
-        ],
-      },
-      previousPurchases: [],
-      buyerPattern: "First-time class pack buyer",
-    },
-    opportunitySignals: [
-      { label: "Likely to repurchase", detail: "Down to 1 credit — prompt with renewal offer", tone: "positive" },
-      { label: "At risk of churn", detail: "Late cancel history and low remaining credits", tone: "attention" },
-    ],
-    history: [
-      { date: "8 Apr", event: "Yoga Flow — Tue 07:00", type: "upcoming" },
-      { date: "2 Apr", event: "Barre Tone — Wed 10:00", type: "attended" },
-      { date: "28 Mar", event: "Yoga Flow — Fri 07:00", type: "attended" },
-      { date: "24 Mar", event: "Reformer Pilates — Mon 09:00", type: "attended" },
-      { date: "20 Mar", event: "Spin Express — Thu 12:30", type: "late_cancel" },
-      { date: "15 Mar", event: "Purchased 5-Class Pass", type: "purchase" },
-    ],
-  },
-  {
-    id: "sean-brennan",
-    name: "Sean Brennan",
-    plan: "10-Class Pass",
-    planType: "class_pack",
-    credits: 4,
-    status: "active",
-    insights: {
-      totalAttended: 4,
-      lateCancels: 1,
-      noShows: 1,
-      cancellationRate: "17%",
-      avgHoldBeforeCancel: "6 hours",
-      preCutoffCancels: 0,
-      postCutoffCancels: 1,
-      behaviourScore: 58,
-      behaviourLabel: "Needs attention",
-      classMix: [
-        { label: "HIIT Circuit", count: 2 },
-        { label: "Spin Express", count: 2 },
-      ],
-    },
-    purchaseInsights: {
-      activePlan: {
-        type: "credit_pack",
-        product: "10-Class Pass",
-        purchaseDate: "10 Mar",
-        totalCredits: 10,
-        creditsUsed: 6,
-        creditsRemaining: 4,
-        lastUsedDate: "31 Mar",
-        purchaseStatus: "Active",
-        usageLog: [
-          { className: "HIIT Circuit", date: "17 Mar" },
-          { className: "Spin Express", date: "20 Mar" },
-          { className: "Spin Express", date: "27 Mar" },
-          { className: "HIIT Circuit", date: "31 Mar" },
-        ],
-      },
-      previousPurchases: [],
-      buyerPattern: "Usually buys class packs",
-    },
-    opportunitySignals: [
-      { label: "At risk of churn", detail: "No-show + late cancel pattern — may disengage if not addressed", tone: "attention" },
-      { label: "Needs attention", detail: "Holds spots for long periods then cancels — impacts class availability", tone: "attention" },
-    ],
-    history: [
-      { date: "8 Apr", event: "HIIT Circuit — Tue 18:00", type: "upcoming" },
-      { date: "4 Apr", event: "Spin Express — Fri 12:30", type: "late_cancel" },
-      { date: "31 Mar", event: "HIIT Circuit — Mon 18:00", type: "attended" },
-      { date: "27 Mar", event: "Spin Express — Thu 12:30", type: "attended" },
-      { date: "24 Mar", event: "HIIT Circuit — Mon 18:00", type: "no_show" },
-      { date: "20 Mar", event: "Spin Express — Thu 12:30", type: "attended" },
-      { date: "17 Mar", event: "HIIT Circuit — Mon 18:00", type: "attended" },
-      { date: "10 Mar", event: "Purchased 10-Class Pass", type: "purchase" },
-    ],
-  },
-  {
-    id: "clodagh-murray",
-    name: "Clodagh Murray",
-    plan: "Unlimited Monthly",
-    planType: "unlimited",
-    credits: null,
-    status: "active",
-    insights: {
-      totalAttended: 1,
-      lateCancels: 0,
-      noShows: 0,
-      cancellationRate: "0%",
-      avgHoldBeforeCancel: "N/A",
-      preCutoffCancels: 0,
-      postCutoffCancels: 0,
-      behaviourScore: 100,
-      behaviourLabel: "Strong",
-      classMix: [
-        { label: "Barre Tone", count: 1 },
-      ],
-    },
-    purchaseInsights: {
-      activePlan: {
-        type: "unlimited",
-        product: "Unlimited Monthly",
-        startDate: "1 Apr",
-        classesAttendedSinceStart: 1,
-        purchaseStatus: "Active",
-      },
-      previousPurchases: [],
-      buyerPattern: "New unlimited member",
-    },
-    opportunitySignals: [
-      { label: "Under-using unlimited", detail: "Only 1 class since starting unlimited — encourage variety", tone: "attention" },
-    ],
-    history: [
-      { date: "9 Apr", event: "Barre Tone — Wed 10:00", type: "upcoming" },
-      { date: "2 Apr", event: "Barre Tone — Wed 10:00", type: "attended" },
-      { date: "1 Apr", event: "Started Unlimited Monthly", type: "started" },
-    ],
-  },
-  {
-    id: "conor-brady",
-    name: "Conor Brady",
-    plan: "5-Class Pass",
-    planType: "class_pack",
-    credits: 0,
-    status: "expired",
-    insights: {
-      totalAttended: 5,
-      lateCancels: 0,
-      noShows: 0,
-      cancellationRate: "0%",
-      avgHoldBeforeCancel: "N/A",
-      preCutoffCancels: 0,
-      postCutoffCancels: 0,
-      behaviourScore: 95,
-      behaviourLabel: "Strong",
-      classMix: [
-        { label: "Spin Express", count: 2 },
-        { label: "Yoga Flow", count: 1 },
-        { label: "HIIT Circuit", count: 1 },
-        { label: "Barre Tone", count: 1 },
-      ],
-    },
-    purchaseInsights: {
-      activePlan: {
-        type: "credit_pack",
-        product: "5-Class Pass",
-        purchaseDate: "20 Mar",
-        totalCredits: 5,
-        creditsUsed: 5,
-        creditsRemaining: 0,
-        lastUsedDate: "7 Apr",
-        purchaseStatus: "Consumed",
-        usageLog: [
-          { className: "Spin Express", date: "24 Mar" },
-          { className: "Barre Tone", date: "27 Mar" },
-          { className: "HIIT Circuit", date: "31 Mar" },
-          { className: "Yoga Flow", date: "3 Apr" },
-          { className: "Spin Express", date: "7 Apr" },
-        ],
-      },
-      previousPurchases: [],
-      buyerPattern: "Reliable pack user — may repurchase",
-    },
-    opportunitySignals: [
-      { label: "Likely to repurchase", detail: "Used all 5 credits with perfect attendance — ready for another pack", tone: "positive" },
-      { label: "Upgrade candidate", detail: "High class frequency suggests unlimited would suit better", tone: "positive" },
-    ],
-    history: [
-      { date: "7 Apr", event: "Spin Express — Mon 12:30", type: "attended" },
-      { date: "3 Apr", event: "Yoga Flow — Thu 07:00", type: "attended" },
-      { date: "31 Mar", event: "HIIT Circuit — Mon 18:00", type: "attended" },
-      { date: "27 Mar", event: "Barre Tone — Thu 10:00", type: "attended" },
-      { date: "24 Mar", event: "Spin Express — Mon 12:30", type: "attended" },
-      { date: "20 Mar", event: "Purchased 5-Class Pass", type: "purchase" },
-    ],
-  },
-  {
-    id: "aoife-nolan",
-    name: "Aoife Nolan",
-    plan: "Drop-in Trial",
-    planType: "trial",
-    credits: 1,
-    status: "active",
-    insights: {
-      totalAttended: 0,
-      lateCancels: 0,
-      noShows: 0,
-      cancellationRate: "0%",
-      avgHoldBeforeCancel: "N/A",
-      preCutoffCancels: 0,
-      postCutoffCancels: 0,
-      behaviourScore: 100,
-      behaviourLabel: "Strong",
-      classMix: [],
-    },
-    purchaseInsights: {
-      activePlan: {
-        type: "simple",
-        product: "Drop-in Trial",
-        purchaseDate: "6 Apr",
-        purchaseStatus: "Active",
-      },
-      previousPurchases: [],
-      buyerPattern: "Occasional drop-in buyer",
-    },
-    opportunitySignals: [
-      { label: "Conversion opportunity", detail: "Trial activated but no classes yet — follow up to encourage first booking", tone: "neutral" },
-    ],
-    history: [
-      { date: "6 Apr", event: "Trial pass activated", type: "purchase" },
-    ],
-  },
-  {
-    id: "padraig-roche",
-    name: "Padraig Roche",
-    plan: "10-Class Pass",
-    planType: "class_pack",
-    credits: 10,
-    status: "active",
-    insights: {
-      totalAttended: 0,
-      lateCancels: 0,
-      noShows: 0,
-      cancellationRate: "0%",
-      avgHoldBeforeCancel: "N/A",
-      preCutoffCancels: 0,
-      postCutoffCancels: 0,
-      behaviourScore: 100,
-      behaviourLabel: "Strong",
-      classMix: [],
-    },
-    purchaseInsights: {
-      activePlan: {
-        type: "credit_pack",
-        product: "10-Class Pass",
-        purchaseDate: "5 Apr",
-        totalCredits: 10,
-        creditsUsed: 0,
-        creditsRemaining: 10,
-        lastUsedDate: null,
-        purchaseStatus: "Active",
-        usageLog: [],
-      },
-      previousPurchases: [],
-      buyerPattern: "New class pack buyer",
-    },
-    opportunitySignals: [
-      { label: "New member", detail: "Recently purchased first pack — ensure a great first class experience", tone: "neutral" },
-    ],
-    history: [
-      { date: "8 Apr", event: "HIIT Circuit — Tue 18:00", type: "upcoming" },
-      { date: "5 Apr", event: "Purchased 10-Class Pass", type: "purchase" },
-    ],
-  },
-  {
-    id: "fiona-healy",
-    name: "Fiona Healy",
-    plan: "5-Class Pass",
-    planType: "class_pack",
-    credits: 3,
-    status: "active",
-    insights: {
-      totalAttended: 2,
-      lateCancels: 0,
-      noShows: 0,
-      cancellationRate: "0%",
-      avgHoldBeforeCancel: "N/A",
-      preCutoffCancels: 0,
-      postCutoffCancels: 0,
-      behaviourScore: 100,
-      behaviourLabel: "Strong",
-      classMix: [
-        { label: "Yoga Flow", count: 1 },
-        { label: "Barre Tone", count: 1 },
-      ],
-    },
-    purchaseInsights: {
-      activePlan: {
-        type: "credit_pack",
-        product: "5-Class Pass",
-        purchaseDate: "25 Mar",
-        totalCredits: 5,
-        creditsUsed: 2,
-        creditsRemaining: 3,
-        lastUsedDate: "1 Apr",
-        purchaseStatus: "Active",
-        usageLog: [
-          { className: "Barre Tone", date: "31 Mar" },
-          { className: "Yoga Flow", date: "1 Apr" },
-        ],
-      },
-      previousPurchases: [],
-      buyerPattern: "First-time class pack buyer",
-    },
-    opportunitySignals: [
-      { label: "Reliable regular", detail: "Perfect attendance on first pack — good retention candidate", tone: "positive" },
-    ],
-    history: [
-      { date: "1 Apr", event: "Yoga Flow — Tue 07:00", type: "attended" },
-      { date: "31 Mar", event: "Barre Tone — Mon 10:00", type: "attended" },
-      { date: "25 Mar", event: "Purchased 5-Class Pass", type: "purchase" },
-    ],
-  },
 ];

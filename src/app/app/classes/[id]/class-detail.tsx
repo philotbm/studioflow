@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import { useStore, formatRelative } from "@/lib/store";
 import type { Attendee, WaitlistEntry, Lifecycle } from "../data";
 import type { AuditEvent } from "@/lib/db";
-import { eligibilityFor } from "@/lib/eligibility";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
 
 // ── Status labels/colours ───────────────────────────────────────────────
@@ -61,15 +60,14 @@ function AddMemberControl({
     (m) => !existingMemberIds.has(m.id),
   );
 
-  // Pre-compute eligibility for the currently-selected member so the operator
-  // sees the block reason *before* clicking Book. Uses the shared engine —
-  // the booking call will re-check the same rules so nothing can slip past.
+  // v0.8.0: read the server-derived booking access state directly from
+  // the member object — it comes from v_members_with_access so the
+  // operator sees the exact reason the DB would enforce. No client-side
+  // rules re-implementation anywhere in this file.
   const selectedMember = selectedSlug
     ? members.find((m) => m.id === selectedSlug)
     : undefined;
-  const selectedEligibility = selectedMember
-    ? eligibilityFor(selectedMember)
-    : null;
+  const selectedAccess = selectedMember?.bookingAccess ?? null;
 
   async function handleBook() {
     if (!selectedSlug || busy) return;
@@ -80,8 +78,8 @@ function AddMemberControl({
       if (result.status === "blocked") {
         setFeedback({
           kind: "blocked",
-          text: result.eligibility.reason,
-          hint: result.eligibility.actionHint,
+          text: result.access.reason,
+          hint: result.access.actionHint,
         });
       } else if (result.alreadyExists) {
         setFeedback({ kind: "ok", text: "Already in this class" });
@@ -122,10 +120,10 @@ function AddMemberControl({
         >
           <option value="">Add member...</option>
           {availableMembers.map((m) => {
-            const el = eligibilityFor(m);
-            const suffix = el.canBook
-              ? `— ${el.entitlementLabel}`
-              : `— ${el.reason}`;
+            const a = m.bookingAccess;
+            const suffix = a.canBook
+              ? `— ${a.entitlementLabel}`
+              : `— ${a.reason}`;
             return (
               <option key={m.id} value={m.id}>
                 {m.name} {suffix}
@@ -150,20 +148,18 @@ function AddMemberControl({
         )}
       </div>
 
-      {selectedEligibility && (
+      {selectedAccess && (
         <div
           className={`text-[11px] ${
-            selectedEligibility.canBook ? "text-white/40" : "text-amber-400/80"
+            selectedAccess.canBook ? "text-white/40" : "text-amber-400/80"
           }`}
         >
-          {selectedEligibility.canBook ? (
-            <>Entitlement: {selectedEligibility.entitlementLabel}</>
+          {selectedAccess.canBook ? (
+            <>Entitlement: {selectedAccess.entitlementLabel}</>
           ) : (
             <>
-              Cannot book — {selectedEligibility.reason}.{" "}
-              <span className="text-white/40">
-                {selectedEligibility.actionHint}
-              </span>
+              Cannot book — {selectedAccess.reason}.{" "}
+              <span className="text-white/40">{selectedAccess.actionHint}</span>
             </>
           )}
         </div>

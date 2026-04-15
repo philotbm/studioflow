@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import type { StudioClass } from "@/app/app/classes/data";
-import type { Member } from "@/app/app/members/data";
+import type { Member, BookingAccess } from "@/app/app/members/data";
 import {
   fetchAllClasses,
   fetchAllMembers,
@@ -20,9 +20,13 @@ import {
   promoteWaitlistEntry,
   unpromoteEntry as dbUnpromote,
   checkInAttendee as dbCheckIn,
+  adjustMemberCredit as dbAdjust,
+  fetchRecentLedgerEntries as dbLedger,
   type AuditEvent,
+  type LedgerEntry,
+  type AdjustCreditResult,
+  type ManualAdjustReason,
 } from "./db";
-import { type EligibilityResult } from "./eligibility";
 
 // ── Relative time formatting ────────────────────────────────────────────
 export function formatRelative(atMs: number, nowMs: number = Date.now()): string {
@@ -41,13 +45,14 @@ export function formatRelative(atMs: number, nowMs: number = Date.now()): string
 // ── Context ─────────────────────────────────────────────────────────────
 /**
  * Result of a bookMember call. A successful call resolves to "booked" or
- * "waitlisted"; a call blocked by the v0.6.0 eligibility engine resolves to
- * "blocked" with the full EligibilityResult so the UI can show the reason.
+ * "waitlisted"; a call blocked by the server's eligibility check resolves
+ * to "blocked" with the full BookingAccess payload so the UI can surface
+ * the reason and action hint directly from the DB truth source.
  */
 export type BookMemberResult =
   | { status: "booked"; alreadyExists?: boolean }
   | { status: "waitlisted"; alreadyExists?: boolean }
-  | { status: "blocked"; eligibility: EligibilityResult };
+  | { status: "blocked"; access: BookingAccess };
 
 type StoreContextValue = {
   classes: StudioClass[];
@@ -65,12 +70,21 @@ type StoreContextValue = {
   promoteEntry: (classSlug: string, memberSlug: string) => Promise<void>;
   /** Unpromote a manually-promoted entry */
   unpromoteEntry: (classSlug: string, memberSlug: string, originalPosition: number) => Promise<void>;
-  /** Book a member into a class (or add to waitlist). Runs eligibility engine first. */
+  /** Book a member into a class (or add to waitlist). Server enforces eligibility. */
   bookMember: (classSlug: string, memberSlug: string) => Promise<BookMemberResult>;
   /** Cancel a booking or remove from waitlist */
   cancelBooking: (classSlug: string, memberSlug: string) => Promise<{ result: "cancelled" | "late_cancel" }>;
   /** Check in an attendee */
   checkInAttendee: (classSlug: string, memberSlug: string) => Promise<void>;
+  /** Manually adjust a member's credit balance (v0.8.0). Reason code is required. */
+  adjustCredit: (
+    memberSlug: string,
+    delta: number,
+    reasonCode: ManualAdjustReason,
+    note: string | null,
+  ) => Promise<AdjustCreditResult>;
+  /** Fetch recent credit-ledger rows for a member (v0.8.0). */
+  getLedger: (memberSlug: string, limit?: number) => Promise<LedgerEntry[]>;
   /** Re-fetch all data from Supabase */
   refresh: () => Promise<void>;
 };
@@ -141,31 +155,47 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const doBook = useCallback(
     async (classSlug: string, memberSlug: string): Promise<BookMemberResult> => {
-      // v0.7.0: The SERVER is the economic truth-source. We no longer
-      // pre-check on the client — sf_book_member enforces eligibility
-      // inside its transaction and can reply with { status: "blocked" }.
-      // eligibility.ts is still used elsewhere for UI previews (dropdown
-      // labels, member detail access card) but never as a gate.
+      // v0.8.0: the server is the ONLY source of booking-access truth.
+      // sf_book_member runs sf_check_eligibility inside its transaction
+      // and returns { status: "blocked", ... } on rejection. The client
+      // has no eligibility rules of its own.
       const result = await dbBook(classSlug, memberSlug);
-      // Always refresh after a booking attempt so credits_remaining,
-      // attendee rosters and waitlist positions reflect the new server state.
       await loadData();
       if (result.status === "blocked") {
-        // Rebuild a full EligibilityResult from the server fields so the
-        // existing UI (class-detail + member-detail) doesn't need to care
-        // whether the block came from the client preview or the DB.
-        const eligibility: EligibilityResult = {
+        const access: BookingAccess = {
           canBook: false,
           reason: result.reason,
           entitlementLabel: result.entitlementLabel,
           creditsRemaining: result.creditsRemaining,
           actionHint: result.actionHint,
+          statusCode: result.statusCode,
         };
-        return { status: "blocked", eligibility };
+        return { status: "blocked", access };
       }
       return result;
     },
     [loadData],
+  );
+
+  const doAdjust = useCallback(
+    async (
+      memberSlug: string,
+      delta: number,
+      reasonCode: ManualAdjustReason,
+      note: string | null,
+    ): Promise<AdjustCreditResult> => {
+      const result = await dbAdjust(memberSlug, delta, reasonCode, note);
+      // Refresh so v_members_with_access re-materializes the new
+      // credit balance and access state.
+      await loadData();
+      return result;
+    },
+    [loadData],
+  );
+
+  const getLedger = useCallback(
+    (memberSlug: string, limit?: number) => dbLedger(memberSlug, limit),
+    [],
   );
 
   const doCancel = useCallback(
@@ -200,12 +230,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       promoteEntry,
       unpromoteEntry: doUnpromote,
       checkInAttendee: doCheckIn,
+      adjustCredit: doAdjust,
+      getLedger,
       refresh: loadData,
     }),
     [
       classes, members, loading, error, hydrated,
       getClass, getMember, getAuditEvents,
-      doBook, doCancel, promoteEntry, doUnpromote, doCheckIn, loadData,
+      doBook, doCancel, promoteEntry, doUnpromote, doCheckIn,
+      doAdjust, getLedger, loadData,
     ],
   );
 
