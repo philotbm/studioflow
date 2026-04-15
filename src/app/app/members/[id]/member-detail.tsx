@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMember } from "@/lib/store";
+import { eligibilityFor } from "@/lib/eligibility";
 import type {
   Member,
   MemberInsights,
@@ -249,6 +250,8 @@ export default function MemberDetail({ id }: { id: string }) {
   const pi = member.purchaseInsights;
   const reasons = reliabilityReasons(ins);
   const impact = revenueImpact(ins);
+  // v0.6.0 — shared eligibility engine drives the access summary.
+  const eligibility = eligibilityFor(member);
 
   return (
     <main className="mx-auto max-w-2xl">
@@ -272,6 +275,50 @@ export default function MemberDetail({ id }: { id: string }) {
             <dd className={status.style}>{status.label}</dd>
           </div>
         </dl>
+      </div>
+
+      {/* Access summary — v0.6.0 Economic Engine */}
+      <div
+        className={`mt-6 rounded border px-4 py-3 ${
+          eligibility.canBook
+            ? "border-green-400/20"
+            : "border-amber-400/30"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs uppercase tracking-wide text-white/40">
+            Booking access
+          </span>
+          <span
+            className={`rounded-full border px-2 py-0.5 text-[11px] ${
+              eligibility.canBook
+                ? "border-green-400/30 text-green-400"
+                : "border-amber-400/30 text-amber-400"
+            }`}
+          >
+            {eligibility.canBook ? "Can book" : "Blocked"}
+          </span>
+        </div>
+        <p
+          className={`mt-2 text-sm font-medium ${
+            eligibility.canBook ? "text-white/90" : "text-amber-400/90"
+          }`}
+        >
+          {eligibility.reason}
+        </p>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/50">
+          <span>
+            <span className="text-white/30">Entitlement:</span>{" "}
+            {eligibility.entitlementLabel}
+          </span>
+          {eligibility.creditsRemaining !== null && (
+            <span>
+              <span className="text-white/30">Credits left:</span>{" "}
+              {eligibility.creditsRemaining}
+            </span>
+          )}
+        </div>
+        <p className="mt-2 text-xs text-white/40">{eligibility.actionHint}</p>
       </div>
 
       {/* Opportunity signals */}

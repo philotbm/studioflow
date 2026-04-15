@@ -68,6 +68,7 @@ function mapMemberRow(r: MemberRow): Member {
     id: r.slug,
     name: r.full_name,
     plan: r.plan_name,
+    planType: r.plan_type,
     credits: r.plan_type === "unlimited" ? null : (r.credits_remaining ?? 0),
     status: appStatus,
     insights: (r.insights_json ?? {}) as MemberInsights,

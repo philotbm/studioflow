@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useStore, formatRelative } from "@/lib/store";
 import type { Attendee, WaitlistEntry, Lifecycle } from "../data";
 import type { AuditEvent } from "@/lib/db";
+import { eligibilityFor } from "@/lib/eligibility";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
 
 // ── Status labels/colours ───────────────────────────────────────────────
@@ -39,6 +40,11 @@ const lifecycleStyle: Record<string, string> = {
 };
 
 // ── Add member control ──────────────────────────────────────────────────
+type AddFeedback =
+  | { kind: "ok"; text: string }
+  | { kind: "blocked"; text: string; hint: string }
+  | { kind: "error"; text: string };
+
 function AddMemberControl({
   classId,
   existingMemberIds,
@@ -49,11 +55,21 @@ function AddMemberControl({
   const { members, bookMember } = useStore();
   const [selectedSlug, setSelectedSlug] = useState("");
   const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<AddFeedback | null>(null);
 
   const availableMembers = members.filter(
     (m) => !existingMemberIds.has(m.id),
   );
+
+  // Pre-compute eligibility for the currently-selected member so the operator
+  // sees the block reason *before* clicking Book. Uses the shared engine —
+  // the booking call will re-check the same rules so nothing can slip past.
+  const selectedMember = selectedSlug
+    ? members.find((m) => m.id === selectedSlug)
+    : undefined;
+  const selectedEligibility = selectedMember
+    ? eligibilityFor(selectedMember)
+    : null;
 
   async function handleBook() {
     if (!selectedSlug || busy) return;
@@ -61,45 +77,96 @@ function AddMemberControl({
     setFeedback(null);
     try {
       const result = await bookMember(classId, selectedSlug);
-      if (result.alreadyExists) {
-        setFeedback("Already in this class");
+      if (result.status === "blocked") {
+        setFeedback({
+          kind: "blocked",
+          text: result.eligibility.reason,
+          hint: result.eligibility.actionHint,
+        });
+      } else if (result.alreadyExists) {
+        setFeedback({ kind: "ok", text: "Already in this class" });
       } else {
-        setFeedback(result.status === "booked" ? "Booked" : "Added to waitlist");
+        setFeedback({
+          kind: "ok",
+          text: result.status === "booked" ? "Booked" : "Added to waitlist",
+        });
       }
-      setSelectedSlug("");
+      if (result.status !== "blocked") setSelectedSlug("");
     } catch (e) {
-      setFeedback(e instanceof Error ? e.message : "Failed");
+      setFeedback({
+        kind: "error",
+        text: e instanceof Error ? e.message : "Failed",
+      });
     } finally {
       setBusy(false);
-      setTimeout(() => setFeedback(null), 3000);
+      setTimeout(() => setFeedback(null), 4000);
     }
   }
 
   if (availableMembers.length === 0) return null;
 
+  const feedbackColor =
+    feedback?.kind === "blocked"
+      ? "text-amber-400/90"
+      : feedback?.kind === "error"
+        ? "text-red-400/90"
+        : "text-green-400/80";
+
   return (
-    <div className="mt-3 flex items-center gap-2">
-      <select
-        value={selectedSlug}
-        onChange={(e) => setSelectedSlug(e.target.value)}
-        className="rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40"
-      >
-        <option value="">Add member...</option>
-        {availableMembers.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name}
-          </option>
-        ))}
-      </select>
-      <button
-        onClick={handleBook}
-        disabled={!selectedSlug || busy}
-        className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40 disabled:opacity-30"
-      >
-        {busy ? "..." : "Book"}
-      </button>
-      {feedback && (
-        <span className="text-xs text-green-400/80">{feedback}</span>
+    <div className="mt-3 flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={selectedSlug}
+          onChange={(e) => setSelectedSlug(e.target.value)}
+          className="rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40"
+        >
+          <option value="">Add member...</option>
+          {availableMembers.map((m) => {
+            const el = eligibilityFor(m);
+            const suffix = el.canBook
+              ? `— ${el.entitlementLabel}`
+              : `— ${el.reason}`;
+            return (
+              <option key={m.id} value={m.id}>
+                {m.name} {suffix}
+              </option>
+            );
+          })}
+        </select>
+        <button
+          onClick={handleBook}
+          disabled={!selectedSlug || busy}
+          className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40 disabled:opacity-30"
+        >
+          {busy ? "..." : "Book"}
+        </button>
+        {feedback && (
+          <span className={`text-xs ${feedbackColor}`}>
+            {feedback.text}
+            {feedback.kind === "blocked" && (
+              <span className="ml-1 text-white/40">— {feedback.hint}</span>
+            )}
+          </span>
+        )}
+      </div>
+
+      {selectedEligibility && (
+        <div
+          className={`text-[11px] ${
+            selectedEligibility.canBook ? "text-white/40" : "text-amber-400/80"
+          }`}
+        >
+          {selectedEligibility.canBook ? (
+            <>Entitlement: {selectedEligibility.entitlementLabel}</>
+          ) : (
+            <>
+              Cannot book — {selectedEligibility.reason}.{" "}
+              <span className="text-white/40">
+                {selectedEligibility.actionHint}
+              </span>
+            </>
+          )}
+        </div>
       )}
     </div>
   );
