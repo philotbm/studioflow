@@ -46,7 +46,7 @@ create table if not exists class_bookings (
   booking_status    text not null default 'booked'
                       check (booking_status in (
                         'booked','waitlisted','cancelled',
-                        'late_cancel','attended','no_show'
+                        'late_cancel','attended','no_show','checked_in'
                       )),
   waitlist_position integer,
   booked_at         timestamptz default now(),

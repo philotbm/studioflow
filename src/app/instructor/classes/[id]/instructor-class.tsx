@@ -1,46 +1,44 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import QRCode from "qrcode";
 import { useStore } from "@/lib/store";
 import type { Attendee } from "@/app/app/classes/data";
-import type { AttendanceOutcome } from "@/lib/db";
+import type { AttendanceOutcome, CheckInSource } from "@/lib/db";
 
 /**
- * v0.8.2 Instructor View
+ * v0.8.3 Instructor View
  *
- * A deliberately narrow surface for running a class:
- *   - class name / time / instructor / booked-capacity
- *   - lifecycle badge (Upcoming / Live / Completed)
- *   - one row per BOOKED member (waitlist is excluded entirely)
- *   - Mark attended / Mark no-show buttons per row
- *   - state switching allowed for correction
+ * Check-in is the positive attendance truth. The instructor view has
+ * four jobs in this release:
  *
- * Lifecycle gate:
- *   - Upcoming  → buttons disabled, clear message
- *   - Live      → buttons active, DB writes allowed
- *   - Completed → read-only, shows final outcomes
+ *   1. Show the class, its lifecycle, and the canonical-language roster.
+ *   2. Display the class-specific QR code during a LIVE class so members
+ *      can scan it and self-check-in via /checkin/classes/[id].
+ *   3. Provide a manual fallback: the instructor can mark a booked
+ *      member as checked in if they cannot self-serve. Source = 'operator'.
+ *   4. Provide the post-close correction path on COMPLETED classes:
+ *      "Mark as checked in" / "Mark as no-show". These are NOT vague
+ *      Undo/Edit actions — they are explicit, auditable transitions
+ *      between the two finalised states.
  *
- * The DB (sf_mark_attendance) enforces the same lifecycle rule as a
- * backstop, so a stale tab cannot overwrite a finalised class.
+ * On a completed class the view auto-invokes sf_finalise_class on mount
+ * so any still-booked rows get swept to no_show (pull-based close).
+ * That sweep is the first visitor's responsibility; subsequent visitors
+ * see an already-finalised class and the RPC is a no-op.
+ *
+ * Waitlist and late_cancel are excluded from the instructor roster entirely.
  */
 
-/**
- * Collapse the canonical Attendee status to the three instructor-facing
- * outcomes. late_cancel is an operator-side state and is excluded from
- * the instructor roster entirely. v0.8.2.1 unified the display
- * language across operator and instructor views — there is no
- * "checked_in" / "not_checked_in" layer to strip anymore, this mapper
- * only has to drop late_cancel.
- */
-type InstructorStatus = "booked" | "attended" | "no_show";
+type InstructorStatus = "booked" | "checked_in" | "no_show";
 
 function collapseToInstructorStatus(a: Attendee): InstructorStatus | null {
   switch (a.status) {
     case "booked":
       return "booked";
-    case "attended":
-      return "attended";
+    case "checked_in":
+      return "checked_in";
     case "no_show":
       return "no_show";
     case "late_cancel":
@@ -50,13 +48,13 @@ function collapseToInstructorStatus(a: Attendee): InstructorStatus | null {
 
 const STATUS_LABEL: Record<InstructorStatus, string> = {
   booked: "Booked",
-  attended: "Attended",
+  checked_in: "Checked in",
   no_show: "No-show",
 };
 
 const STATUS_TONE: Record<InstructorStatus, string> = {
   booked: "text-white/60",
-  attended: "text-green-400",
+  checked_in: "text-green-400",
   no_show: "text-red-400",
 };
 
@@ -72,11 +70,25 @@ const LIFECYCLE_STYLE: Record<string, string> = {
   completed: "text-white/40 border-white/10",
 };
 
+// ── Attendee row ────────────────────────────────────────────────────────
+// Three modes driven by `mode`:
+//   live      — full live-class controls: Mark as checked in / Mark as
+//               no-show / Undo (revert to booked). The operator fallback
+//               uses the same "Mark as checked in" button, which records
+//               source='operator' in the audit trail via sf_check_in or
+//               sf_mark_attendance (see handleMark + handleCheckIn below).
+//   correction — completed-class post-close correction: explicit
+//                "Mark as checked in" / "Mark as no-show" only, no Undo,
+//                no "booked" revert.
+//   readonly  — upcoming classes: no buttons.
+type RowMode = "live" | "correction" | "readonly";
+
 type AttendeeRowProps = {
   name: string;
   memberId?: string;
   status: InstructorStatus;
-  editable: boolean;
+  mode: RowMode;
+  onCheckIn: (memberId: string) => Promise<void>;
   onMark: (memberId: string, outcome: AttendanceOutcome) => Promise<void>;
   busy: boolean;
 };
@@ -85,11 +97,31 @@ function AttendeeRow({
   name,
   memberId,
   status,
-  editable,
+  mode,
+  onCheckIn,
   onMark,
   busy,
 }: AttendeeRowProps) {
-  const canAct = editable && !busy && memberId !== undefined;
+  const canAct = mode !== "readonly" && !busy && memberId !== undefined;
+  const isCheckedIn = status === "checked_in";
+  const isNoShow = status === "no_show";
+
+  // "Mark as checked in" button has slightly different semantics per mode:
+  //   - live: first time from booked → call sf_check_in (source=operator)
+  //           so it lands in the ledger as a real check-in, not a
+  //           "correction". Subsequent flips from no_show → checked_in
+  //           go through sf_mark_attendance as an attendance update.
+  //   - correction: always goes through sf_mark_attendance so the audit
+  //                 row is tagged as a post-close correction.
+  function handleMarkCheckedIn() {
+    if (!memberId) return;
+    if (mode === "live" && status === "booked") {
+      onCheckIn(memberId);
+    } else {
+      onMark(memberId, "checked_in");
+    }
+  }
+
   return (
     <li className="flex flex-col gap-2 rounded border border-white/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -98,58 +130,141 @@ function AttendeeRow({
           {STATUS_LABEL[status]}
         </span>
       </div>
-      {editable ? (
-        <div className="flex items-center gap-2">
+      {mode === "readonly" ? (
+        <span className="text-xs text-white/40">{STATUS_LABEL[status]}</span>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => memberId && onMark(memberId, "attended")}
+            onClick={handleMarkCheckedIn}
             disabled={!canAct}
             className={`rounded border px-2.5 py-1 text-xs transition-colors disabled:opacity-30 ${
-              status === "attended"
+              isCheckedIn
                 ? "border-green-400/60 bg-green-400/10 text-green-300"
                 : "border-white/20 text-white/70 hover:border-green-400/40 hover:text-green-300"
             }`}
-            aria-pressed={status === "attended"}
+            aria-pressed={isCheckedIn}
           >
-            {status === "attended" ? "Attended ✓" : "Mark attended"}
+            {isCheckedIn ? "Checked in ✓" : "Mark as checked in"}
           </button>
           <button
             onClick={() => memberId && onMark(memberId, "no_show")}
             disabled={!canAct}
             className={`rounded border px-2.5 py-1 text-xs transition-colors disabled:opacity-30 ${
-              status === "no_show"
+              isNoShow
                 ? "border-red-400/60 bg-red-400/10 text-red-300"
                 : "border-white/20 text-white/70 hover:border-red-400/40 hover:text-red-300"
             }`}
-            aria-pressed={status === "no_show"}
+            aria-pressed={isNoShow}
           >
-            {status === "no_show" ? "No-show ✓" : "Mark no-show"}
+            {isNoShow ? "No-show ✓" : "Mark as no-show"}
           </button>
-          {status !== "booked" && canAct && (
+          {/*
+            Undo is LIVE-ONLY. It reverts an accidental mark to the
+            booked baseline while the class is running. It is
+            deliberately NOT available on completed classes — the
+            correction path is explicit ("Mark as checked in" /
+            "Mark as no-show") so an operator never silently knocks
+            a finalised row back into a limbo state.
+          */}
+          {mode === "live" && status !== "booked" && canAct && (
             <button
               onClick={() => memberId && onMark(memberId, "booked")}
               disabled={!canAct}
               className="text-xs text-white/30 underline-offset-2 hover:text-white hover:underline"
-              title="Revert back to booked (mistake correction)"
+              title="Revert to booked (live-class mistake correction)"
             >
               Undo
             </button>
           )}
         </div>
-      ) : (
-        <span className="text-xs text-white/40">
-          {/* Read-only view — no buttons at all */}
-          {STATUS_LABEL[status]}
-        </span>
       )}
     </li>
   );
 }
 
+// ── QR panel ─────────────────────────────────────────────────────────────
+function CheckInQrPanel({ classSlug }: { classSlug: string }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    if (!shown || typeof window === "undefined") return;
+    const href = `${window.location.origin}/checkin/classes/${classSlug}`;
+    QRCode.toDataURL(href, { width: 240, margin: 1 })
+      .then(setDataUrl)
+      .catch((err) => {
+        console.warn("[CheckInQrPanel] QR generation failed:", err);
+      });
+  }, [classSlug, shown]);
+
+  const checkinUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/checkin/classes/${classSlug}`
+      : `/checkin/classes/${classSlug}`;
+
+  return (
+    <div className="mt-6 rounded border border-white/10 px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs uppercase tracking-wide text-white/40">
+          Check-in QR
+        </span>
+        <button
+          onClick={() => setShown((s) => !s)}
+          className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40"
+        >
+          {shown ? "Hide" : "Show QR for members"}
+        </button>
+      </div>
+      {shown && (
+        <div className="mt-4 flex flex-col items-center gap-3">
+          {dataUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={dataUrl}
+              alt="Class check-in QR code"
+              width={240}
+              height={240}
+              className="rounded bg-white p-2"
+            />
+          ) : (
+            <p className="text-xs text-white/40">Generating QR…</p>
+          )}
+          <p className="text-center text-[11px] text-white/40">
+            Members scan this to self-check-in.
+            <br />
+            <a
+              href={checkinUrl}
+              className="break-all underline-offset-2 hover:underline"
+            >
+              {checkinUrl}
+            </a>
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Page component ──────────────────────────────────────────────────────
 export default function InstructorClass({ id }: { id: string }) {
-  const { getClass, markAttendance, loading } = useStore();
+  const { getClass, markAttendance, checkInMember, finaliseClass, loading } =
+    useStore();
   const cls = getClass(id);
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // v0.8.3 pull-based class close — fires once per completed-class view
+  // mount. The RPC is idempotent server-side; this ref just avoids
+  // redundant RPC calls while the store is still rehydrating.
+  const sweptRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (cls?.lifecycle === "completed" && sweptRef.current !== cls.id) {
+      sweptRef.current = cls.id;
+      finaliseClass(cls.id).catch((err) =>
+        console.warn("[InstructorClass] finaliseClass failed:", err),
+      );
+    }
+  }, [cls?.lifecycle, cls?.id, finaliseClass]);
 
   if (loading && !cls) {
     return (
@@ -186,10 +301,30 @@ export default function InstructorClass({ id }: { id: string }) {
     attendees.push({ name: a.name, memberId: a.memberId, status: s });
   }
 
-  const editable = cls.lifecycle === "live";
-  const attendedCount = attendees.filter((a) => a.status === "attended").length;
+  const mode: RowMode =
+    cls.lifecycle === "live"
+      ? "live"
+      : cls.lifecycle === "completed"
+        ? "correction"
+        : "readonly";
+
+  const checkedInCount = attendees.filter((a) => a.status === "checked_in").length;
   const noShowCount = attendees.filter((a) => a.status === "no_show").length;
   const pendingCount = attendees.filter((a) => a.status === "booked").length;
+
+  async function handleCheckIn(memberSlug: string) {
+    setBusySlug(memberSlug);
+    setError(null);
+    try {
+      // Instructor fallback check-in → source='operator'
+      const source: CheckInSource = "operator";
+      await checkInMember(cls!.id, memberSlug, source);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to check in");
+    } finally {
+      setBusySlug(null);
+    }
+  }
 
   async function handleMark(memberSlug: string, outcome: AttendanceOutcome) {
     setBusySlug(memberSlug);
@@ -236,22 +371,27 @@ export default function InstructorClass({ id }: { id: string }) {
       {/* Lifecycle guidance */}
       {cls.lifecycle === "upcoming" && (
         <div className="mt-6 rounded border border-white/10 px-4 py-3 text-xs text-white/50">
-          Class has not started yet — attendance marking will unlock once the
-          class goes live.
+          Class has not started yet — check-in and attendance marking
+          unlock once the class goes live.
         </div>
       )}
       {cls.lifecycle === "completed" && (
-        <div className="mt-6 rounded border border-white/10 px-4 py-3 text-xs text-white/50">
-          Class is completed — attendance is read-only.
+        <div className="mt-6 rounded border border-amber-400/20 px-4 py-3 text-xs text-amber-200/80">
+          Class is completed — post-class corrections only. Use the
+          explicit <strong>Mark as checked in</strong> / <strong>Mark as no-show</strong> actions
+          to correct a row. Each correction is recorded in the audit trail.
         </div>
       )}
 
+      {/* QR panel — live classes only */}
+      {cls.lifecycle === "live" && <CheckInQrPanel classSlug={cls.id} />}
+
       {/* Summary counters */}
-      {editable && (
+      {(cls.lifecycle === "live" || cls.lifecycle === "completed") && (
         <div className="mt-6 grid grid-cols-3 gap-3 text-center">
           <div className="rounded border border-white/10 px-3 py-2">
-            <span className="text-xs text-white/40">Attended</span>
-            <p className="text-lg font-semibold text-green-400">{attendedCount}</p>
+            <span className="text-xs text-white/40">Checked in</span>
+            <p className="text-lg font-semibold text-green-400">{checkedInCount}</p>
           </div>
           <div className="rounded border border-white/10 px-3 py-2">
             <span className="text-xs text-white/40">No-show</span>
@@ -278,8 +418,9 @@ export default function InstructorClass({ id }: { id: string }) {
                 name={a.name}
                 memberId={a.memberId}
                 status={a.status}
-                editable={editable}
+                mode={mode}
                 busy={busySlug === a.memberId}
+                onCheckIn={handleCheckIn}
                 onMark={handleMark}
               />
             ))}

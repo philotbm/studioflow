@@ -108,20 +108,24 @@ function mapBookingsToAttendees(
   bookings: BookingJoined[],
   promotionMeta: Map<string, number>,
 ): Attendee[] {
-  // v0.8.2.1: the canonical visible attendance language is just the four
-  // real booking_status values. There is no "checked_in"/"not_checked_in"
-  // display overlay anymore — the check_in_at timestamp column still
-  // exists in the DB from earlier releases but does not affect the
-  // visible status. Check-in as a first-class state returns in v0.8.3.
+  // v0.8.3: canonical statuses are booked / checked_in / late_cancel /
+  // no_show. Legacy 'attended' rows were normalised by the v0.8.3 SQL
+  // migration, but we still map any stray 'attended' read from older
+  // caches / transitional rows to 'checked_in' so the client never
+  // shows two attendance languages at once.
   return bookings
     .filter((b) => b.booking_status !== "waitlisted" && b.is_active)
     .map((b) => {
       const originalPosition = promotionMeta.get(b.id);
+      const status: Attendee["status"] =
+        b.booking_status === "attended"
+          ? "checked_in"
+          : (b.booking_status as Attendee["status"]);
 
       return {
         name: b.members?.full_name ?? "Unknown",
         memberId: b.members?.slug,
-        status: b.booking_status as Attendee["status"],
+        status,
         ...(b.promotion_source
           ? {
               promotedFromPosition: originalPosition,
@@ -436,14 +440,14 @@ export async function unpromoteEntry(
 }
 
 /**
- * v0.8.2 Instructor attendance outcomes.
+ * v0.8.3 attendance correction outcomes.
  *
- * `booked` is the revert state (used when an instructor mis-marked and
- * wants to roll the row back to the pre-marked state). `attended` and
- * `no_show` are the two real outcomes. The server-side rules live in
- * sf_mark_attendance: live class only, active non-waitlist booking only.
+ * 'checked_in' and 'no_show' are the post-close correction targets and
+ * the live-class instructor-fallback targets. 'booked' is a live-only
+ * revert used when an instructor mis-marked during class. Completed
+ * classes reject 'booked' at the server-side — they are finalised.
  */
-export type AttendanceOutcome = "attended" | "no_show" | "booked";
+export type AttendanceOutcome = "checked_in" | "no_show" | "booked";
 
 export type MarkAttendanceResult = {
   ok: true;
@@ -481,6 +485,77 @@ export async function markAttendance(
     previous: result.previous as AttendanceOutcome,
     noop: result.noop,
   };
+}
+
+/**
+ * v0.8.3 check-in source. Both client-side paths (direct navigation
+ * AND QR-scanned URL) use 'client'. The instructor fallback button in
+ * the instructor view uses 'operator'. All sources converge on the
+ * same sf_check_in RPC and produce the same booking_status=checked_in
+ * state — the source only distinguishes the audit row.
+ */
+export type CheckInSource = "client" | "operator";
+
+export type CheckInResult = {
+  ok: true;
+  source: CheckInSource;
+};
+
+export async function checkInMember(
+  classSlug: string,
+  memberSlug: string,
+  source: CheckInSource,
+): Promise<CheckInResult> {
+  const { data, error } = await requireClient().rpc("sf_check_in", {
+    p_class_slug: classSlug,
+    p_member_slug: memberSlug,
+    p_source: source,
+  });
+  if (error) {
+    console.error("[sf_check_in] RPC failed:", error.message);
+    throw new Error(`sf_check_in failed: ${error.message}`);
+  }
+  const result = (data ?? {}) as {
+    ok?: boolean;
+    source?: string;
+    error?: string;
+  };
+  if (result.error) throw new Error(result.error);
+  if (!result.ok) throw new Error("sf_check_in: unexpected response");
+  return { ok: true, source: result.source as CheckInSource };
+}
+
+/**
+ * v0.8.3 auto-close sweep. Idempotent. Safe to call from any view
+ * that renders a completed class; the first visitor after class end
+ * triggers the sweep of still-booked rows to no_show, subsequent
+ * visits see the finalised state.
+ */
+export type FinaliseClassResult = {
+  ok: true;
+  swept: number;
+  noop?: boolean;
+};
+
+export async function finaliseClass(
+  classSlug: string,
+): Promise<FinaliseClassResult> {
+  const { data, error } = await requireClient().rpc("sf_finalise_class", {
+    p_class_slug: classSlug,
+  });
+  if (error) {
+    console.error("[sf_finalise_class] RPC failed:", error.message);
+    throw new Error(`sf_finalise_class failed: ${error.message}`);
+  }
+  const result = (data ?? {}) as {
+    ok?: boolean;
+    swept?: number;
+    noop?: boolean;
+    error?: string;
+  };
+  if (result.error) throw new Error(result.error);
+  if (!result.ok) throw new Error("sf_finalise_class: unexpected response");
+  return { ok: true, swept: result.swept ?? 0, noop: result.noop };
 }
 
 export async function checkInAttendee(

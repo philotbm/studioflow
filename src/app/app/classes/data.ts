@@ -1,16 +1,24 @@
 /**
- * Canonical visible attendance language for StudioFlow, v0.8.2.1.
+ * Canonical visible attendance language for StudioFlow, v0.8.3.
  *
- * Exactly five states — no derived "checked_in"/"not_checked_in" overlays.
- * The check-in concept (QR / client check-in) is deferred to v0.8.3+ and
- * is not a first-class attendance state in this phase. The visible
- * language across operator and instructor views must be drawn only from
- * this union to avoid drift between surfaces.
+ * Check-in is now the positive attendance truth:
+ *   booked     — roster entry, no attendance marked
+ *   checked_in — the member is physically present (via client, QR or
+ *                instructor fallback)
+ *   no_show    — the member did not attend (either auto-swept at
+ *                class close or set via correction)
+ *   late_cancel — the member cancelled after the cancellation window
+ *                 closed; excluded from instructor roster
+ *
+ * "attended" is retired in v0.8.3. Any legacy rows carrying 'attended'
+ * are normalised to 'checked_in' by the v0.8.3 migration. The client
+ * mapper additionally maps any remaining 'attended' read to
+ * 'checked_in' as a belt-and-suspenders safety.
  */
 export type Attendee = {
   name: string;
   memberId?: string;
-  status: "booked" | "attended" | "late_cancel" | "no_show";
+  status: "booked" | "checked_in" | "late_cancel" | "no_show";
   // Set by the promotions transform when an attendee was lifted off the
   // waitlist. Preserves the original waitlist position so the Unpromote
   // action can revert cleanly.

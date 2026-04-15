@@ -23,12 +23,17 @@ import {
   adjustMemberCredit as dbAdjust,
   fetchRecentLedgerEntries as dbLedger,
   markAttendance as dbMarkAttendance,
+  checkInMember as dbCheckInMember,
+  finaliseClass as dbFinaliseClass,
   type AuditEvent,
   type LedgerEntry,
   type AdjustCreditResult,
   type ManualAdjustReason,
   type AttendanceOutcome,
   type MarkAttendanceResult,
+  type CheckInSource,
+  type CheckInResult,
+  type FinaliseClassResult,
 } from "./db";
 
 // ── Relative time formatting ────────────────────────────────────────────
@@ -88,12 +93,20 @@ type StoreContextValue = {
   ) => Promise<AdjustCreditResult>;
   /** Fetch recent credit-ledger rows for a member (v0.8.0). */
   getLedger: (memberSlug: string, limit?: number) => Promise<LedgerEntry[]>;
-  /** v0.8.2: instructor attendance outcome (booked/attended/no_show). */
+  /** v0.8.3: attendance correction (checked_in / no_show / booked). */
   markAttendance: (
     classSlug: string,
     memberSlug: string,
     outcome: AttendanceOutcome,
   ) => Promise<MarkAttendanceResult>;
+  /** v0.8.3: positive check-in truth. Used by client, QR, and operator fallback. */
+  checkInMember: (
+    classSlug: string,
+    memberSlug: string,
+    source: CheckInSource,
+  ) => Promise<CheckInResult>;
+  /** v0.8.3: pull-based class close — idempotent sweep of booked→no_show. */
+  finaliseClass: (classSlug: string) => Promise<FinaliseClassResult>;
   /** Re-fetch all data from Supabase */
   refresh: () => Promise<void>;
 };
@@ -222,6 +235,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [loadData],
   );
 
+  const doCheckInMember = useCallback(
+    async (
+      classSlug: string,
+      memberSlug: string,
+      source: CheckInSource,
+    ): Promise<CheckInResult> => {
+      const result = await dbCheckInMember(classSlug, memberSlug, source);
+      await loadData();
+      return result;
+    },
+    [loadData],
+  );
+
+  const doFinaliseClass = useCallback(
+    async (classSlug: string): Promise<FinaliseClassResult> => {
+      const result = await dbFinaliseClass(classSlug);
+      // Only refresh if the sweep actually did something — this is an
+      // important optimisation because every completed-class view-load
+      // calls this on mount, and a no-op shouldn't burn a refresh cycle.
+      if (result.swept > 0) await loadData();
+      return result;
+    },
+    [loadData],
+  );
+
   const doCancel = useCallback(
     async (classSlug: string, memberSlug: string) => {
       const result = await dbCancel(classSlug, memberSlug);
@@ -257,13 +295,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       adjustCredit: doAdjust,
       getLedger,
       markAttendance: doMarkAttendance,
+      checkInMember: doCheckInMember,
+      finaliseClass: doFinaliseClass,
       refresh: loadData,
     }),
     [
       classes, members, loading, error, hydrated,
       getClass, getMember, getAuditEvents,
       doBook, doCancel, promoteEntry, doUnpromote, doCheckIn,
-      doAdjust, getLedger, doMarkAttendance, loadData,
+      doAdjust, getLedger, doMarkAttendance,
+      doCheckInMember, doFinaliseClass, loadData,
     ],
   );
 
