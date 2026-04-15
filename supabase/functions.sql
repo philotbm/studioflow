@@ -1,9 +1,10 @@
--- StudioFlow v0.8.2 — Economic Engine + Instructor Attendance (canonical)
+-- StudioFlow v0.8.3 — Economic Engine + Check-In Truth (canonical)
 --
 -- This file is the CURRENT STATE of all StudioFlow PL/pgSQL — run it in
 -- the Supabase SQL Editor after schema.sql when setting up a fresh
 -- project. For incremental deploys the per-version migrations live at
--- supabase/v0.8.0_migration.sql and supabase/v0.8.2_migration.sql.
+-- supabase/v0.8.0_migration.sql, supabase/v0.8.2_migration.sql, and
+-- supabase/v0.8.3_migration.sql.
 -- Every function is CREATE OR REPLACE and the credit_transactions
 -- table / v_members_with_access view are idempotent so re-runs are safe.
 --
@@ -16,9 +17,15 @@
 --   - sf_book_member / sf_cancel_booking / sf_auto_promote /
 --     sf_promote_member / sf_unpromote_member thread ledger context
 --
--- v0.8.2 adds:
---   - sf_mark_attendance (instructor attendance transitions for
---     booked <-> attended <-> no_show on live classes)
+-- v0.8.2 added:
+--   - sf_mark_attendance (first-pass attendance transitions)
+--
+-- v0.8.3 replaces the attendance model with check-in as truth:
+--   - class_bookings.booking_status now allows 'checked_in'
+--   - sf_check_in — positive attendance truth input (client/QR/operator)
+--   - sf_finalise_class — idempotent close sweep booked → no_show
+--   - sf_mark_attendance — correction path (checked_in ↔ no_show),
+--     'booked' revert live-only, 'attended' outcome removed
 
 -- ═══ WAITLIST PERFORMANCE INDEX ═════════════════════════════════════════
 CREATE INDEX IF NOT EXISTS idx_waitlist_position
@@ -781,41 +788,37 @@ BEGIN
 END;
 $$;
 
--- ═══ sf_mark_attendance ════════════════════════════════════════════════
--- Transitions a single active booking's status between the three
--- instructor-relevant states: 'booked', 'attended', 'no_show'.
+-- ═══ 3. sf_check_in ════════════════════════════════════════════════════
+-- Positive attendance truth input. One of the three input channels
+-- (client app page, QR-scanned URL, instructor fallback) calls this.
+-- Source is recorded in booking_events metadata for audit.
 --
 -- Rules:
---   - The class must be LIVE (starts_at <= now() AND ends_at >= now()).
---     Upcoming classes cannot be marked (instructor UI disables it too).
---     Completed classes are read-only (the DB enforces this as a
---     safety backstop so a stale tab can't overwrite a finalised class).
---   - The booking must be is_active = true AND currently one of
---     {booked, attended, no_show}. Waitlist, cancelled, and late_cancel
---     rows are explicitly ineligible.
---   - p_outcome must be one of 'attended', 'no_show', or 'booked'
---     (the last one is an explicit revert to the pre-marked state,
---     used for mistake correction).
---   - Writes exactly one row to booking_events for the transition,
---     carrying the previous status in metadata so the audit trail is
---     reversible.
+--   - Class must be LIVE (starts_at <= now() <= ends_at). Upcoming and
+--     completed classes are rejected.
+--   - Active booking must exist and currently be 'booked'.
+--     Waitlisted, cancelled, late_cancel, and "not booked at all"
+--     cases all resolve to the same "No eligible booking" error.
+--   - Already-checked-in rows are rejected with a clear duplicate error
+--     — the front-end hides the Check in button in that case, but the
+--     DB is the backstop.
+--   - Source must be one of 'client', 'operator' (v0.8.3). A future
+--     release can extend this set.
 --
--- Returns { ok: true, outcome, previous } on success, or
--- { error: "..." } on any validation failure.
-CREATE OR REPLACE FUNCTION sf_mark_attendance(
+-- Return: { ok: true } or { error: "..." }.
+CREATE OR REPLACE FUNCTION sf_check_in(
   p_class_slug  text,
   p_member_slug text,
-  p_outcome     text
+  p_source      text
 ) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
   v_class   RECORD;
   v_member  RECORD;
   v_booking RECORD;
 BEGIN
-  IF p_outcome NOT IN ('attended', 'no_show', 'booked') THEN
+  IF p_source IS NULL OR p_source NOT IN ('client', 'operator') THEN
     RETURN jsonb_build_object(
-      'error',
-      'Invalid outcome — must be one of: attended, no_show, booked'
+      'error', 'Invalid source — must be one of: client, operator'
     );
   END IF;
 
@@ -834,40 +837,192 @@ BEGIN
     RETURN jsonb_build_object('error', 'Class not found: ' || p_class_slug);
   END IF;
 
-  -- Lifecycle guard. The instructor UI disables these actions outside
-  -- the live window; this check is the server-side backstop.
+  -- Lifecycle gate: live only
   IF v_class.ends_at < now() THEN
-    RETURN jsonb_build_object(
-      'error',
-      'Class is completed — attendance is read-only'
-    );
+    RETURN jsonb_build_object('error', 'Class is completed — check-in closed');
   END IF;
   IF v_class.starts_at > now() THEN
-    RETURN jsonb_build_object(
-      'error',
-      'Class has not started — attendance cannot be marked yet'
-    );
+    RETURN jsonb_build_object('error', 'Class has not started — check-in is not open yet');
   END IF;
 
-  -- Only allow transitions on an active booked / attended / no_show row.
-  -- Waitlist rows, cancelled rows, and late_cancel rows are off-limits.
-  SELECT id, booking_status
-  INTO v_booking
+  -- Find eligible booking. Must be active AND currently booked or
+  -- checked_in (already-checked-in is rejected separately below so we
+  -- return the precise error).
+  SELECT id, booking_status INTO v_booking
   FROM class_bookings
   WHERE class_id = v_class.id
     AND member_id = v_member.id
     AND is_active = true
-    AND booking_status IN ('booked', 'attended', 'no_show');
+    AND booking_status IN ('booked', 'checked_in');
 
   IF v_booking IS NULL THEN
+    -- This catches waitlisted, cancelled, late_cancel, and "no booking" all
+    -- with the same operator-safe message.
     RETURN jsonb_build_object(
-      'error',
-      'No eligible booking found for this member in this class'
+      'error', 'No eligible booking — member is not booked into this class'
     );
   END IF;
 
-  -- No-op if the outcome matches the current status — still return ok
-  -- so the caller can treat it idempotently.
+  IF v_booking.booking_status = 'checked_in' THEN
+    RETURN jsonb_build_object('error', 'Already checked in');
+  END IF;
+
+  UPDATE class_bookings SET
+    booking_status = 'checked_in',
+    checked_in_at = now(),
+    updated_at = now()
+  WHERE id = v_booking.id;
+
+  INSERT INTO booking_events (
+    class_id, member_id, booking_id, event_type, event_label, metadata
+  )
+  VALUES (
+    v_class.id, v_member.id, v_booking.id,
+    'checked_in',
+    'Checked in (' || p_source || ')',
+    jsonb_build_object('source', p_source)
+  );
+
+  RETURN jsonb_build_object('ok', true, 'source', p_source);
+END;
+$$;
+
+-- ═══ 4. sf_finalise_class ══════════════════════════════════════════════
+-- Idempotent sweep: on a completed class, every active booking with
+-- booking_status='booked' transitions to 'no_show' and gets a
+-- booking_events audit row. Already-checked-in rows are left alone.
+--
+-- Returns { ok: true, swept: N } — N = number of rows transitioned.
+-- noop when the class is not yet completed or there is nothing to sweep.
+CREATE OR REPLACE FUNCTION sf_finalise_class(p_class_slug text)
+RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  v_class RECORD;
+  v_count integer := 0;
+  r RECORD;
+BEGIN
+  SELECT id, starts_at, ends_at INTO v_class
+  FROM classes WHERE slug = p_class_slug FOR UPDATE;
+
+  IF v_class IS NULL THEN
+    RETURN jsonb_build_object('error', 'Class not found');
+  END IF;
+
+  -- Only sweep completed classes. Live / upcoming classes are a no-op.
+  IF v_class.ends_at > now() THEN
+    RETURN jsonb_build_object('ok', true, 'swept', 0, 'noop', true);
+  END IF;
+
+  FOR r IN
+    SELECT id, member_id
+    FROM class_bookings
+    WHERE class_id = v_class.id
+      AND is_active = true
+      AND booking_status = 'booked'
+  LOOP
+    UPDATE class_bookings SET
+      booking_status = 'no_show',
+      updated_at = now()
+    WHERE id = r.id;
+
+    INSERT INTO booking_events (
+      class_id, member_id, booking_id, event_type, event_label, metadata
+    )
+    VALUES (
+      v_class.id, r.member_id, r.id,
+      'auto_no_show',
+      'Auto marked no-show at class close',
+      jsonb_build_object('source', 'auto_close')
+    );
+
+    v_count := v_count + 1;
+  END LOOP;
+
+  RETURN jsonb_build_object('ok', true, 'swept', v_count);
+END;
+$$;
+
+-- ═══ 5. sf_mark_attendance — v0.8.3 update ═════════════════════════════
+-- This now serves the correction path (post-close mistake correction)
+-- and the live-class instructor fallback. Outcomes:
+--
+--   'checked_in' — mark as checked in
+--                  allowed on LIVE (instructor fallback) and COMPLETED
+--                  (post-close correction).
+--   'no_show'    — mark as no-show
+--                  allowed on LIVE (rare, e.g. correcting an erroneous
+--                  check-in during class) and COMPLETED (post-close
+--                  correction).
+--   'booked'     — revert a mistake back to the booked baseline.
+--                  LIVE ONLY. A completed class cannot be reverted to
+--                  the limbo "booked" state via this RPC — that would
+--                  undo finalisation and is deliberately blocked.
+--
+-- Upcoming classes are always rejected. 'attended' is rejected at the
+-- input-validation step — it is no longer an accepted outcome.
+CREATE OR REPLACE FUNCTION sf_mark_attendance(
+  p_class_slug  text,
+  p_member_slug text,
+  p_outcome     text
+) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  v_class    RECORD;
+  v_member   RECORD;
+  v_booking  RECORD;
+  v_is_live  boolean;
+  v_is_done  boolean;
+BEGIN
+  IF p_outcome NOT IN ('checked_in', 'no_show', 'booked') THEN
+    RETURN jsonb_build_object(
+      'error',
+      'Invalid outcome — must be one of: checked_in, no_show, booked'
+    );
+  END IF;
+
+  SELECT id INTO v_member FROM members WHERE slug = p_member_slug;
+  IF v_member IS NULL THEN
+    RETURN jsonb_build_object('error', 'Member not found: ' || p_member_slug);
+  END IF;
+
+  SELECT id, starts_at, ends_at INTO v_class
+  FROM classes WHERE slug = p_class_slug FOR UPDATE;
+
+  IF v_class IS NULL THEN
+    RETURN jsonb_build_object('error', 'Class not found: ' || p_class_slug);
+  END IF;
+
+  v_is_done := v_class.ends_at < now();
+  v_is_live := v_class.starts_at <= now() AND NOT v_is_done;
+
+  IF NOT v_is_live AND NOT v_is_done THEN
+    RETURN jsonb_build_object(
+      'error', 'Class has not started — attendance cannot be marked yet'
+    );
+  END IF;
+
+  -- 'booked' (revert) is live-only; completed classes are finalised.
+  IF v_is_done AND p_outcome = 'booked' THEN
+    RETURN jsonb_build_object(
+      'error',
+      'Class is completed — cannot revert to booked; use checked_in or no_show'
+    );
+  END IF;
+
+  -- Eligible booking: active AND one of the attendance-bearing states.
+  SELECT id, booking_status INTO v_booking
+  FROM class_bookings
+  WHERE class_id = v_class.id
+    AND member_id = v_member.id
+    AND is_active = true
+    AND booking_status IN ('booked', 'checked_in', 'no_show');
+
+  IF v_booking IS NULL THEN
+    RETURN jsonb_build_object(
+      'error', 'No eligible booking found for this member in this class'
+    );
+  END IF;
+
+  -- Idempotent no-op.
   IF v_booking.booking_status = p_outcome THEN
     RETURN jsonb_build_object(
       'ok', true,
@@ -887,17 +1042,24 @@ BEGIN
   )
   VALUES (
     v_class.id, v_member.id, v_booking.id,
-    CASE p_outcome
-      WHEN 'attended' THEN 'attendance_attended'
-      WHEN 'no_show'  THEN 'attendance_no_show'
-      WHEN 'booked'   THEN 'attendance_reverted'
+    CASE
+      WHEN v_is_done AND p_outcome = 'checked_in' THEN 'correction_checked_in'
+      WHEN v_is_done AND p_outcome = 'no_show'    THEN 'correction_no_show'
+      WHEN p_outcome = 'checked_in' THEN 'attendance_checked_in'
+      WHEN p_outcome = 'no_show'    THEN 'attendance_no_show'
+      WHEN p_outcome = 'booked'     THEN 'attendance_reverted'
     END,
-    CASE p_outcome
-      WHEN 'attended' THEN 'Marked attended'
-      WHEN 'no_show'  THEN 'Marked no-show'
-      WHEN 'booked'   THEN 'Attendance reverted to booked'
+    CASE
+      WHEN v_is_done AND p_outcome = 'checked_in' THEN 'Marked as checked in (correction)'
+      WHEN v_is_done AND p_outcome = 'no_show'    THEN 'Marked as no-show (correction)'
+      WHEN p_outcome = 'checked_in' THEN 'Marked as checked in'
+      WHEN p_outcome = 'no_show'    THEN 'Marked as no-show'
+      WHEN p_outcome = 'booked'     THEN 'Attendance reverted to booked'
     END,
-    jsonb_build_object('previous_status', v_booking.booking_status)
+    jsonb_build_object(
+      'previous_status', v_booking.booking_status,
+      'lifecycle', CASE WHEN v_is_done THEN 'completed' ELSE 'live' END
+    )
   );
 
   RETURN jsonb_build_object(

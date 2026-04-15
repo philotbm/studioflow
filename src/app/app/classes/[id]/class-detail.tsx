@@ -1,20 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore, formatRelative } from "@/lib/store";
 import type { Attendee, WaitlistEntry, Lifecycle } from "../data";
 import type { AuditEvent } from "@/lib/db";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
 
-// ── Canonical attendance status language (v0.8.2.1) ─────────────────────
+// ── Canonical attendance status language (v0.8.3) ───────────────────────
 // These labels are the ONLY visible attendance language in the operator
-// view. They match the instructor view's labels verbatim so there is no
-// drift between surfaces. If you need to add a new state, extend both
-// surfaces together and update src/app/app/classes/data.ts#Attendee.
+// view. They match the instructor view and client check-in surfaces
+// verbatim so there is no drift. If you need to add a new state, extend
+// every surface together and update src/app/app/classes/data.ts#Attendee.
 const statusLabel: Record<string, string> = {
   booked: "Booked",
-  attended: "Attended",
+  checked_in: "Checked in",
   no_show: "No-show",
   late_cancel: "Late cancel",
   cancelled: "Cancelled",
@@ -22,7 +22,7 @@ const statusLabel: Record<string, string> = {
 
 const statusColor: Record<string, string> = {
   booked: "text-white/60",
-  attended: "text-green-400",
+  checked_in: "text-green-400",
   no_show: "text-red-400",
   late_cancel: "text-red-400",
   cancelled: "text-white/40",
@@ -438,9 +438,6 @@ function BookingAuditLog({ classSlug }: { classSlug: string }) {
 
 // ── Page component ──────────────────────────────────────────────────────
 export default function ClassDetail({ id }: { id: string }) {
-  // v0.8.2.1: checkInAttendee is intentionally not consumed here. The
-  // check-in UI was removed as part of the attendance-language
-  // unification; check-in returns as a first-class concept in v0.8.3.
   const {
     getClass,
     getMember,
@@ -448,9 +445,26 @@ export default function ClassDetail({ id }: { id: string }) {
     cancelBooking,
     promoteEntry,
     unpromoteEntry,
+    finaliseClass,
   } = useStore();
 
   const cls = getClass(id);
+
+  // v0.8.3 pull-based class close: when the operator views a completed
+  // class, we idempotently sweep any still-booked rows to no_show. The
+  // RPC is a no-op if there's nothing to sweep; loadData is only
+  // triggered inside the store if swept>0. Ref-guarded so a single
+  // mount fires at most one sweep attempt per class even as the
+  // classes array updates behind us.
+  const sweptRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (cls?.lifecycle === "completed" && sweptRef.current !== cls.id) {
+      sweptRef.current = cls.id;
+      finaliseClass(cls.id).catch((err) =>
+        console.warn("[ClassDetail] finaliseClass failed:", err),
+      );
+    }
+  }, [cls?.lifecycle, cls?.id, finaliseClass]);
 
   if (!cls) {
     return (
