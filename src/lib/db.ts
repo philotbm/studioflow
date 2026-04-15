@@ -1,5 +1,12 @@
 import { getSupabaseClient } from "./supabase";
-import type { MemberRow, ClassRow, BookingRow, BookingEventRow } from "./database.types";
+import type {
+  MemberAccessRow,
+  ClassRow,
+  BookingRow,
+  BookingEventRow,
+  CreditTransactionRow,
+  AccessJson,
+} from "./database.types";
 import type { StudioClass, Attendee, WaitlistEntry, Lifecycle } from "@/app/app/classes/data";
 import type {
   Member,
@@ -7,6 +14,7 @@ import type {
   PurchaseInsights,
   OpportunitySignal,
   HistoryEvent,
+  BookingAccess,
 } from "@/app/app/members/data";
 
 /** Throws if Supabase client is not initialized */
@@ -49,28 +57,44 @@ function formatClassTime(startsAt: string): string {
 
 // ── DB → App type mappers ───────────────────────────────────────────
 
-function mapMemberRow(r: MemberRow): Member {
-  let appStatus: "active" | "expiring" | "expired";
-  if (r.status === "inactive") {
-    appStatus = "expired";
-  } else if (
-    r.status === "active" &&
-    r.credits_remaining !== null &&
-    r.credits_remaining <= 1 &&
-    r.plan_type === "class_pack"
-  ) {
-    appStatus = "expiring";
-  } else {
-    appStatus = "active";
+/**
+ * Translate the snake_case `access` JSONB column from
+ * `v_members_with_access` into the camelCase `BookingAccess` shape the
+ * UI consumes. The DB is the source of truth — this mapper must not
+ * synthesize any missing fields or re-derive rules.
+ */
+function mapAccess(a: AccessJson | null | undefined): BookingAccess {
+  if (!a) {
+    // Defensive fallback for old rows or misconfigured view — should
+    // never happen in production. Treat as blocked so we fail closed.
+    return {
+      canBook: false,
+      reason: "Access data unavailable",
+      entitlementLabel: "Unknown",
+      creditsRemaining: null,
+      actionHint: "Reload the app",
+      statusCode: "not_found",
+    };
   }
+  return {
+    canBook: a.can_book,
+    reason: a.reason,
+    entitlementLabel: a.entitlement_label,
+    creditsRemaining: a.credits_remaining,
+    actionHint: a.action_hint,
+    statusCode: a.status_code,
+  };
+}
 
+function mapMemberRow(r: MemberAccessRow): Member {
   return {
     id: r.slug,
     name: r.full_name,
     plan: r.plan_name,
     planType: r.plan_type,
     credits: r.plan_type === "unlimited" ? null : (r.credits_remaining ?? 0),
-    status: appStatus,
+    accountStatus: r.status,
+    bookingAccess: mapAccess(r.access),
     insights: (r.insights_json ?? {}) as MemberInsights,
     purchaseInsights: (r.purchase_insights_json ?? {}) as PurchaseInsights,
     opportunitySignals: (r.opportunity_signals_json ?? []) as OpportunitySignal[],
@@ -227,8 +251,11 @@ export async function fetchClassBySlug(slug: string): Promise<StudioClass | null
 }
 
 export async function fetchAllMembers(): Promise<Member[]> {
+  // v0.8.0: read from the server-derived access view instead of `members`
+  // directly. The `access` column is the DB's booking-access truth — the
+  // client no longer re-runs any eligibility rules.
   const { data, error } = await requireClient()
-    .from("members")
+    .from("v_members_with_access")
     .select("*")
     .not("plan_type", "eq", "drop_in")
     .order("full_name", { ascending: true });
@@ -240,18 +267,18 @@ export async function fetchAllMembers(): Promise<Member[]> {
   if (!data) {
     throw new Error("fetchAllMembers: no data returned");
   }
-  return (data as MemberRow[]).map(mapMemberRow);
+  return (data as MemberAccessRow[]).map(mapMemberRow);
 }
 
 export async function fetchMemberBySlug(slug: string): Promise<Member | null> {
   const { data, error } = await requireClient()
-    .from("members")
+    .from("v_members_with_access")
     .select("*")
     .eq("slug", slug)
     .single();
 
   if (error || !data) return null;
-  return mapMemberRow(data as MemberRow);
+  return mapMemberRow(data as MemberAccessRow);
 }
 
 export type AuditEvent = {
@@ -309,9 +336,10 @@ async function callRpc<T>(name: string, params: Record<string, unknown>): Promis
 }
 
 /**
- * Raw shape of what the v0.7.0 sf_book_member RPC returns when the server
- * rejects the booking on economic grounds. The server is the truth-source;
- * the client never derives these fields locally.
+ * Raw shape of what the sf_book_member RPC returns when the server
+ * rejects the booking on economic grounds. Populated from the server's
+ * structured access payload (including the v0.8.0 status_code field) —
+ * the client never derives any of these locally.
  */
 export type BlockedBookingResponse = {
   status: "blocked";
@@ -319,6 +347,7 @@ export type BlockedBookingResponse = {
   entitlementLabel: string;
   creditsRemaining: number | null;
   actionHint: string;
+  statusCode: import("@/app/app/members/data").BookingAccessStatus;
 };
 
 export type BookingOutcome =
@@ -329,10 +358,10 @@ export async function bookMemberIntoClass(
   classSlug: string,
   memberSlug: string,
 ): Promise<BookingOutcome> {
-  // v0.7.0: the server can now legitimately reply with status "blocked"
-  // and a structured reason. This is NOT an error — it's a normal
-  // domain outcome — so we bypass the callRpc helper (which would throw
-  // on error-keyed responses) and inspect the raw response ourselves.
+  // The server can legitimately reply with status "blocked" and a
+  // structured reason. This is NOT an error — it's a normal domain
+  // outcome — so we bypass the callRpc helper (which would throw on
+  // error-keyed responses) and inspect the raw response ourselves.
   const { data, error } = await requireClient().rpc("sf_book_member", {
     p_class_slug: classSlug,
     p_member_slug: memberSlug,
@@ -349,6 +378,7 @@ export async function bookMemberIntoClass(
     entitlement_label?: string;
     credits_remaining?: number | null;
     action_hint?: string;
+    status_code?: string;
     error?: string;
   };
   if (result.error) {
@@ -362,6 +392,9 @@ export async function bookMemberIntoClass(
       creditsRemaining:
         result.credits_remaining === undefined ? null : result.credits_remaining,
       actionHint: result.action_hint ?? "",
+      statusCode:
+        (result.status_code as BlockedBookingResponse["statusCode"]) ??
+        "no_entitlement",
     };
   }
   return {
@@ -443,4 +476,125 @@ export async function checkInAttendee(
     event_type: "checked_in",
     event_label: "Checked in",
   });
+}
+
+// ── v0.8.0: manual credit adjustment + ledger reads ─────────────────
+
+/**
+ * Allowed operator reason codes for manual credit adjustments. This list
+ * must stay in sync with `sf_adjust_credit`'s server-side `v_allowed`
+ * array — if either side changes, update both. The DB is authoritative:
+ * any code not in the server list is rejected with a structured error,
+ * so the client never silently accepts unknown codes.
+ */
+export const MANUAL_ADJUST_REASONS = [
+  "bereavement",
+  "medical",
+  "studio_error",
+  "goodwill",
+  "admin_correction",
+  "service_recovery",
+] as const;
+export type ManualAdjustReason = (typeof MANUAL_ADJUST_REASONS)[number];
+
+export type AdjustCreditResult = {
+  ok: true;
+  balanceAfter: number;
+  ledgerId: string;
+  delta: number;
+  reasonCode: ManualAdjustReason;
+};
+
+/**
+ * Call the atomic `sf_adjust_credit` RPC. Reason code is required. The
+ * server locks the member row, clamps the resulting balance at 0, and
+ * writes a single ledger row with source='operator'. On validation
+ * failure the RPC returns `{error: "..."}` which we re-throw as an
+ * Error so callers can display it.
+ */
+export async function adjustMemberCredit(
+  memberSlug: string,
+  delta: number,
+  reasonCode: ManualAdjustReason,
+  note: string | null,
+): Promise<AdjustCreditResult> {
+  const { data, error } = await requireClient().rpc("sf_adjust_credit", {
+    p_member_slug: memberSlug,
+    p_delta: delta,
+    p_reason_code: reasonCode,
+    p_note: note,
+    p_operator_key: null,
+  });
+  if (error) {
+    console.error("[sf_adjust_credit] RPC failed:", error.message);
+    throw new Error(`sf_adjust_credit failed: ${error.message}`);
+  }
+  const result = (data ?? {}) as {
+    ok?: boolean;
+    balance_after?: number;
+    ledger_id?: string;
+    delta?: number;
+    reason_code?: string;
+    error?: string;
+  };
+  if (result.error) throw new Error(result.error);
+  if (!result.ok) throw new Error("sf_adjust_credit: unexpected response");
+  return {
+    ok: true,
+    balanceAfter: result.balance_after ?? 0,
+    ledgerId: result.ledger_id ?? "",
+    delta: result.delta ?? delta,
+    reasonCode: result.reason_code as ManualAdjustReason,
+  };
+}
+
+export type LedgerEntry = {
+  id: string;
+  delta: number;
+  balanceAfter: number;
+  reasonCode: string;
+  source: "system" | "operator";
+  note: string | null;
+  classId: string | null;
+  bookingId: string | null;
+  createdAt: string;
+};
+
+/**
+ * Fetch the most recent credit-ledger rows for a given member, newest
+ * first. Used by the member-detail recent-ledger panel.
+ */
+export async function fetchRecentLedgerEntries(
+  memberSlug: string,
+  limit = 10,
+): Promise<LedgerEntry[]> {
+  const { data: mem } = await requireClient()
+    .from("members")
+    .select("id")
+    .eq("slug", memberSlug)
+    .single();
+  if (!mem) return [];
+
+  const { data, error } = await requireClient()
+    .from("credit_transactions")
+    .select("*")
+    .eq("member_id", mem.id)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("[fetchRecentLedgerEntries] query failed:", error.message);
+    return [];
+  }
+  return (data as CreditTransactionRow[]).map((r) => ({
+    id: r.id,
+    delta: r.delta,
+    balanceAfter: r.balance_after,
+    reasonCode: r.reason_code,
+    source: r.source,
+    note: r.note,
+    classId: r.class_id,
+    bookingId: r.booking_id,
+    createdAt: r.created_at,
+  }));
 }

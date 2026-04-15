@@ -1,53 +1,20 @@
--- StudioFlow v0.8.0 — Economic Truth Hardening + Credit Control (canonical)
+-- StudioFlow v0.8.0 — Economic Truth Hardening + Credit Control
 --
--- This file is the CURRENT STATE of all StudioFlow PL/pgSQL — run it in
--- the Supabase SQL Editor after schema.sql when setting up a fresh
--- project. For incremental deploys, the per-version migration lives at
--- supabase/v0.8.0_migration.sql. Every function is CREATE OR REPLACE and
--- the credit_transactions table / v_members_with_access view are
--- idempotent (IF NOT EXISTS / OR REPLACE) so re-runs are safe.
+-- Run this in the Supabase SQL Editor after the v0.7.0 migration is already
+-- applied. It is idempotent on its functions (CREATE OR REPLACE), the
+-- credit_transactions table (CREATE IF NOT EXISTS), and the view
+-- (CREATE OR REPLACE VIEW).
 --
--- v0.8.0 introduces:
---   - credit_transactions table (append-only financial ledger)
---   - v_members_with_access view (DB is the only eligibility truth)
---   - sf_adjust_credit (atomic manual operator adjustment)
---   - sf_check_eligibility returns status_code alongside reason/hint
---   - sf_consume_credit / sf_refund_credit are ledger-aware and require
---     reason + source + class/booking context
---   - sf_book_member / sf_cancel_booking / sf_auto_promote /
---     sf_promote_member / sf_unpromote_member thread ledger context
---     through on every credit touch
-
--- ═══ WAITLIST PERFORMANCE INDEX ═════════════════════════════════════════
-CREATE INDEX IF NOT EXISTS idx_waitlist_position
-  ON class_bookings (class_id, waitlist_position)
-  WHERE booking_status = 'waitlisted' AND is_active = true;
-
--- ═══ HELPER: count active booked (non-waitlisted) entries ═══════════════
-CREATE OR REPLACE FUNCTION sf_count_booked(p_class_id uuid)
-RETURNS integer LANGUAGE sql STABLE AS $$
-  SELECT count(*)::integer
-  FROM class_bookings
-  WHERE class_id = p_class_id
-    AND is_active = true
-    AND booking_status NOT IN ('waitlisted', 'cancelled', 'late_cancel');
-$$;
-
--- ═══ HELPER: resequence waitlist positions ══════════════════════════════
-CREATE OR REPLACE FUNCTION sf_resequence_waitlist(p_class_id uuid)
-RETURNS void LANGUAGE sql AS $$
-  WITH numbered AS (
-    SELECT id, ROW_NUMBER() OVER (ORDER BY waitlist_position ASC) AS new_pos
-    FROM class_bookings
-    WHERE class_id = p_class_id
-      AND booking_status = 'waitlisted'
-      AND is_active = true
-  )
-  UPDATE class_bookings cb
-  SET waitlist_position = n.new_pos, updated_at = now()
-  FROM numbered n
-  WHERE cb.id = n.id AND cb.waitlist_position IS DISTINCT FROM n.new_pos;
-$$;
+-- What it introduces:
+--   1. credit_transactions — append-only financial ledger
+--   2. sf_check_eligibility — extended to return status_code
+--   3. v_members_with_access — server-side truth for booking access; the
+--      client reads this view instead of duplicating rules in TypeScript
+--   4. sf_consume_credit / sf_refund_credit — ledger-aware, require context
+--   5. sf_adjust_credit — atomic manual operator adjustment with reason code
+--   6. sf_book_member / sf_cancel_booking / sf_auto_promote /
+--      sf_promote_member / sf_unpromote_member — updated to pass ledger
+--      context through to the credit helpers
 
 -- ═══ CREDIT_TRANSACTIONS — append-only financial truth ═════════════════
 CREATE TABLE IF NOT EXISTS credit_transactions (
