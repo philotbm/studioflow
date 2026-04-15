@@ -22,7 +22,7 @@ import {
   checkInAttendee as dbCheckIn,
   type AuditEvent,
 } from "./db";
-import { eligibilityFor, type EligibilityResult } from "./eligibility";
+import { type EligibilityResult } from "./eligibility";
 
 // ── Relative time formatting ────────────────────────────────────────────
 export function formatRelative(atMs: number, nowMs: number = Date.now()): string {
@@ -141,24 +141,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const doBook = useCallback(
     async (classSlug: string, memberSlug: string): Promise<BookMemberResult> => {
-      // v0.6.0 Economic Engine Foundation — economic gate before capacity gate.
-      // The eligibility engine is the single truth-source; if it says "no",
-      // we never reach the DB RPC and the class is left untouched. If the
-      // member slug isn't found locally we fall through — the RPC will
-      // return a structured "Member not found" error which the caller
-      // already handles as a thrown Error.
-      const member = members.find((m) => m.id === memberSlug);
-      if (member) {
-        const eligibility = eligibilityFor(member);
-        if (!eligibility.canBook) {
-          return { status: "blocked", eligibility };
-        }
-      }
+      // v0.7.0: The SERVER is the economic truth-source. We no longer
+      // pre-check on the client — sf_book_member enforces eligibility
+      // inside its transaction and can reply with { status: "blocked" }.
+      // eligibility.ts is still used elsewhere for UI previews (dropdown
+      // labels, member detail access card) but never as a gate.
       const result = await dbBook(classSlug, memberSlug);
+      // Always refresh after a booking attempt so credits_remaining,
+      // attendee rosters and waitlist positions reflect the new server state.
       await loadData();
+      if (result.status === "blocked") {
+        // Rebuild a full EligibilityResult from the server fields so the
+        // existing UI (class-detail + member-detail) doesn't need to care
+        // whether the block came from the client preview or the DB.
+        const eligibility: EligibilityResult = {
+          canBook: false,
+          reason: result.reason,
+          entitlementLabel: result.entitlementLabel,
+          creditsRemaining: result.creditsRemaining,
+          actionHint: result.actionHint,
+        };
+        return { status: "blocked", eligibility };
+      }
       return result;
     },
-    [loadData, members],
+    [loadData],
   );
 
   const doCancel = useCallback(
