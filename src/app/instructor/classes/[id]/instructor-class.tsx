@@ -26,21 +26,18 @@ import type { AttendanceOutcome } from "@/lib/db";
  */
 
 /**
- * The store's Attendee model layers a "checked_in" display state on top
- * of booking_status=booked when checked_in_at is set. The instructor
- * view doesn't care about check-in (that's v0.8.3); it only cares about
- * the three attendance outcomes. So collapse checked_in/not_checked_in
- * back to "booked" for rendering purposes. Also drop late_cancel — it's
- * an operator/admin state that the instructor should not see in their
- * attendee list.
+ * Collapse the canonical Attendee status to the three instructor-facing
+ * outcomes. late_cancel is an operator-side state and is excluded from
+ * the instructor roster entirely. v0.8.2.1 unified the display
+ * language across operator and instructor views — there is no
+ * "checked_in" / "not_checked_in" layer to strip anymore, this mapper
+ * only has to drop late_cancel.
  */
 type InstructorStatus = "booked" | "attended" | "no_show";
 
 function collapseToInstructorStatus(a: Attendee): InstructorStatus | null {
   switch (a.status) {
     case "booked":
-    case "checked_in":
-    case "not_checked_in":
       return "booked";
     case "attended":
       return "attended";
