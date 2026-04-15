@@ -22,10 +22,13 @@ import {
   checkInAttendee as dbCheckIn,
   adjustMemberCredit as dbAdjust,
   fetchRecentLedgerEntries as dbLedger,
+  markAttendance as dbMarkAttendance,
   type AuditEvent,
   type LedgerEntry,
   type AdjustCreditResult,
   type ManualAdjustReason,
+  type AttendanceOutcome,
+  type MarkAttendanceResult,
 } from "./db";
 
 // ── Relative time formatting ────────────────────────────────────────────
@@ -85,6 +88,12 @@ type StoreContextValue = {
   ) => Promise<AdjustCreditResult>;
   /** Fetch recent credit-ledger rows for a member (v0.8.0). */
   getLedger: (memberSlug: string, limit?: number) => Promise<LedgerEntry[]>;
+  /** v0.8.2: instructor attendance outcome (booked/attended/no_show). */
+  markAttendance: (
+    classSlug: string,
+    memberSlug: string,
+    outcome: AttendanceOutcome,
+  ) => Promise<MarkAttendanceResult>;
   /** Re-fetch all data from Supabase */
   refresh: () => Promise<void>;
 };
@@ -198,6 +207,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const doMarkAttendance = useCallback(
+    async (
+      classSlug: string,
+      memberSlug: string,
+      outcome: AttendanceOutcome,
+    ): Promise<MarkAttendanceResult> => {
+      const result = await dbMarkAttendance(classSlug, memberSlug, outcome);
+      // Refresh so both the operator class-detail page and the instructor
+      // view pick up the new attendance state from the same store.
+      await loadData();
+      return result;
+    },
+    [loadData],
+  );
+
   const doCancel = useCallback(
     async (classSlug: string, memberSlug: string) => {
       const result = await dbCancel(classSlug, memberSlug);
@@ -232,13 +256,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       checkInAttendee: doCheckIn,
       adjustCredit: doAdjust,
       getLedger,
+      markAttendance: doMarkAttendance,
       refresh: loadData,
     }),
     [
       classes, members, loading, error, hydrated,
       getClass, getMember, getAuditEvents,
       doBook, doCancel, promoteEntry, doUnpromote, doCheckIn,
-      doAdjust, getLedger, loadData,
+      doAdjust, getLedger, doMarkAttendance, loadData,
     ],
   );
 

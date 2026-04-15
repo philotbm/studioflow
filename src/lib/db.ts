@@ -439,6 +439,54 @@ export async function unpromoteEntry(
   });
 }
 
+/**
+ * v0.8.2 Instructor attendance outcomes.
+ *
+ * `booked` is the revert state (used when an instructor mis-marked and
+ * wants to roll the row back to the pre-marked state). `attended` and
+ * `no_show` are the two real outcomes. The server-side rules live in
+ * sf_mark_attendance: live class only, active non-waitlist booking only.
+ */
+export type AttendanceOutcome = "attended" | "no_show" | "booked";
+
+export type MarkAttendanceResult = {
+  ok: true;
+  outcome: AttendanceOutcome;
+  previous: AttendanceOutcome;
+  noop?: boolean;
+};
+
+export async function markAttendance(
+  classSlug: string,
+  memberSlug: string,
+  outcome: AttendanceOutcome,
+): Promise<MarkAttendanceResult> {
+  const { data, error } = await requireClient().rpc("sf_mark_attendance", {
+    p_class_slug: classSlug,
+    p_member_slug: memberSlug,
+    p_outcome: outcome,
+  });
+  if (error) {
+    console.error("[sf_mark_attendance] RPC failed:", error.message);
+    throw new Error(`sf_mark_attendance failed: ${error.message}`);
+  }
+  const result = (data ?? {}) as {
+    ok?: boolean;
+    outcome?: string;
+    previous?: string;
+    noop?: boolean;
+    error?: string;
+  };
+  if (result.error) throw new Error(result.error);
+  if (!result.ok) throw new Error("sf_mark_attendance: unexpected response");
+  return {
+    ok: true,
+    outcome: result.outcome as AttendanceOutcome,
+    previous: result.previous as AttendanceOutcome,
+    noop: result.noop,
+  };
+}
+
 export async function checkInAttendee(
   classSlug: string,
   memberSlug: string,

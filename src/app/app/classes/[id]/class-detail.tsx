@@ -570,6 +570,15 @@ export default function ClassDetail({ id }: { id: string }) {
               : "Free cancellation open"}
           </p>
         )}
+        {/* v0.8.2: jump into the focused instructor attendance view. */}
+        <div className="mt-3">
+          <Link
+            href={`/instructor/classes/${cls.id}`}
+            className="inline-block rounded border border-white/20 px-2.5 py-1 text-xs text-white/70 hover:border-white/40 hover:text-white"
+          >
+            Open Instructor View &rarr;
+          </Link>
+        </div>
       </div>
 
       <div className="mt-8">
