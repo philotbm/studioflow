@@ -58,12 +58,55 @@ const LEDGER_REASON_LABELS: Record<string, string> = {
   service_recovery: "Adj · Service recovery",
 };
 
-function ManualAdjustControl({ memberSlug, canAdjust }: { memberSlug: string; canAdjust: boolean }) {
+/**
+ * Strict integer parser for the delta input. Rejects:
+ *   - empty / whitespace-only strings
+ *   - anything that isn't a signed integer (e.g. "1e1", "1.5", "0x10", "abc")
+ *   - zero (no-op adjustments are disallowed by the DB anyway)
+ * Returns null on invalid input — callers must not submit.
+ *
+ * v0.8.1: replaces the prior `Number(delta)` coercion. `Number("1e1")` was
+ * 10, `Number(" 10 ")` was 10 — both valid JS, both surprising on a
+ * financial surface. The confirmation step below also echoes this parsed
+ * value back verbatim, so the operator sees exactly what will be sent.
+ */
+function parseDelta(input: string): number | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  if (!/^[+-]?\d+$/.test(trimmed)) return null;
+  const n = parseInt(trimmed, 10);
+  if (!Number.isInteger(n) || n === 0) return null;
+  return n;
+}
+
+function ManualAdjustControl({
+  memberSlug,
+  memberName,
+  canAdjust,
+}: {
+  memberSlug: string;
+  memberName: string;
+  canAdjust: boolean;
+}) {
   const { adjustCredit } = useStore();
-  const [delta, setDelta] = useState("1");
+  // v0.8.1: start empty. The prior "1" default + post-submit reset to "1"
+  // was the root cause of the observed mismatch — the reset made the
+  // displayed value disagree with the success feedback.
+  const [delta, setDelta] = useState("");
   const [reason, setReason] = useState<ManualAdjustReason>("goodwill");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  // Two-phase submit: null = composing, object = pending confirmation.
+  // The pending object freezes the exact values that will be sent so the
+  // confirmation echo can never drift from the actual submitted payload.
+  const [pending, setPending] = useState<
+    | null
+    | {
+        delta: number;
+        reason: ManualAdjustReason;
+        note: string | null;
+      }
+  >(null);
   const [feedback, setFeedback] = useState<
     | { kind: "ok"; text: string }
     | { kind: "error"; text: string }
@@ -78,27 +121,60 @@ function ManualAdjustControl({ memberSlug, canAdjust }: { memberSlug: string; ca
     );
   }
 
-  async function handleSubmit() {
-    const n = Number(delta);
-    if (!Number.isFinite(n) || n === 0) {
-      setFeedback({ kind: "error", text: "Delta must be a non-zero number" });
+  const parsed = parseDelta(delta);
+  const canReview = parsed !== null && !busy && !pending;
+
+  function handleReview() {
+    if (parsed === null) {
+      setFeedback({
+        kind: "error",
+        text: "Enter a non-zero whole number (e.g. 1 or -2)",
+      });
       return;
     }
+    // Freeze the payload NOW so subsequent edits to the inputs don't
+    // affect what's submitted. This is the single most important safety
+    // property of the flow: confirmation text === submitted payload.
+    setPending({
+      delta: parsed,
+      reason,
+      note: note.trim() || null,
+    });
+    setFeedback(null);
+  }
+
+  function handleCancel() {
+    setPending(null);
+  }
+
+  async function handleConfirm() {
+    if (!pending) return;
     setBusy(true);
     setFeedback(null);
     try {
-      const res = await adjustCredit(memberSlug, n, reason, note.trim() || null);
+      const res = await adjustCredit(
+        memberSlug,
+        pending.delta,
+        pending.reason,
+        pending.note,
+      );
       setFeedback({
         kind: "ok",
-        text: `Applied ${n > 0 ? "+" : ""}${n} · balance now ${res.balanceAfter}`,
+        text: `Applied ${pending.delta > 0 ? "+" : ""}${pending.delta} · balance now ${res.balanceAfter}`,
       });
-      setDelta("1");
+      // Clear to empty (NOT "1") so the next adjust requires an
+      // explicit typed value. The success feedback is the record of
+      // what just happened.
+      setDelta("");
       setNote("");
+      setPending(null);
     } catch (e) {
       setFeedback({
         kind: "error",
         text: e instanceof Error ? e.message : "Adjustment failed",
       });
+      // Leave the pending state in place so the operator can retry
+      // without re-typing, unless they cancel.
     } finally {
       setBusy(false);
     }
@@ -111,16 +187,21 @@ function ManualAdjustControl({ memberSlug, canAdjust }: { memberSlug: string; ca
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <input
-          type="number"
+          type="text"
+          inputMode="numeric"
+          pattern="[+-]?\d+"
           value={delta}
           onChange={(e) => setDelta(e.target.value)}
-          className="w-16 rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40"
+          placeholder="e.g. 1 or -2"
+          disabled={pending !== null || busy}
+          className="w-28 rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40 disabled:opacity-50"
           aria-label="Delta"
         />
         <select
           value={reason}
           onChange={(e) => setReason(e.target.value as ManualAdjustReason)}
-          className="rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40"
+          disabled={pending !== null || busy}
+          className="rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40 disabled:opacity-50"
           aria-label="Reason code"
         >
           {MANUAL_ADJUST_REASONS.map((r) => (
@@ -134,21 +215,68 @@ function ManualAdjustControl({ memberSlug, canAdjust }: { memberSlug: string; ca
           value={note}
           onChange={(e) => setNote(e.target.value)}
           placeholder="Optional note"
-          className="min-w-[10rem] flex-1 rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40"
+          disabled={pending !== null || busy}
+          className="min-w-[10rem] flex-1 rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40 disabled:opacity-50"
           aria-label="Note"
         />
         <button
-          onClick={handleSubmit}
-          disabled={busy}
+          onClick={handleReview}
+          disabled={!canReview}
           className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40 disabled:opacity-30"
         >
-          {busy ? "..." : "Apply"}
+          Review
         </button>
       </div>
+
+      {/* Two-phase confirmation — echoes the EXACT payload that will be sent. */}
+      {pending && (
+        <div
+          className="mt-1 flex flex-col gap-2 rounded border border-amber-400/40 bg-amber-400/5 px-3 py-2"
+          role="alertdialog"
+          aria-label="Confirm credit adjustment"
+        >
+          <p className="text-xs text-amber-200/90">
+            Apply{" "}
+            <strong className="font-semibold">
+              {pending.delta > 0 ? `+${pending.delta}` : pending.delta}{" "}
+              credit{Math.abs(pending.delta) === 1 ? "" : "s"}
+            </strong>{" "}
+            to <strong className="font-semibold">{memberName}</strong> for{" "}
+            <strong className="font-semibold">
+              {ADJUST_REASON_LABELS[pending.reason]}
+            </strong>
+            {pending.note ? (
+              <>
+                {" "}— <em className="not-italic text-white/70">{pending.note}</em>
+              </>
+            ) : null}
+            ?
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleConfirm}
+              disabled={busy}
+              className="rounded border border-amber-400/50 px-2.5 py-1 text-xs text-amber-200 hover:bg-amber-400/10 disabled:opacity-30"
+            >
+              {busy ? "Applying..." : "Confirm"}
+            </button>
+            <button
+              onClick={handleCancel}
+              disabled={busy}
+              className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40 disabled:opacity-30"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {feedback && <span className={`text-xs ${fbColor}`}>{feedback.text}</span>}
       <p className="text-[11px] text-white/30">
-        Reason code is required. Use positive delta to add credits, negative
-        to remove. Every adjustment writes a row to the credit ledger.
+        Reason code is required. Positive delta adds credits, negative
+        removes. Review and confirm before every adjustment — the
+        confirmation shows the exact value that will be written to the
+        ledger.
       </p>
     </div>
   );
@@ -503,9 +631,20 @@ export default function MemberDetail({ id }: { id: string }) {
               {access.creditsRemaining}
             </span>
           )}
-          <span className="text-white/30">code: {access.statusCode}</span>
         </div>
         <p className="mt-2 text-xs text-white/40">{access.actionHint}</p>
+        {/*
+          v0.8.1: the raw machine status code is kept as a low-priority
+          diagnostic (title tooltip) so operators still have it for
+          support conversations, but it's not part of the primary
+          operator-facing messaging anymore.
+        */}
+        <p
+          className="mt-1 text-[10px] uppercase tracking-wide text-white/20"
+          title={`Server status code: ${access.statusCode}`}
+        >
+          status · {access.statusCode}
+        </p>
       </div>
 
       {/* Manual credit adjustment — v0.8.0 */}
@@ -514,7 +653,11 @@ export default function MemberDetail({ id }: { id: string }) {
           Manual credit adjustment
         </span>
         <div className="mt-3">
-          <ManualAdjustControl memberSlug={member.id} canAdjust={canAdjust} />
+          <ManualAdjustControl
+            memberSlug={member.id}
+            memberName={member.name}
+            canAdjust={canAdjust}
+          />
         </div>
       </div>
 
