@@ -1,10 +1,8 @@
--- StudioFlow v0.7.0 — Booking/Cancellation + Economic Engine (canonical)
+-- StudioFlow v0.7.0 — Economic Engine: Consumption + Server Enforcement
 --
--- This file is the CURRENT STATE of all StudioFlow PL/pgSQL — run it in the
--- Supabase SQL Editor after schema.sql when setting up a fresh project.
--- For incremental deploys, the per-version migration lives at
--- supabase/v0.7.0_migration.sql (identical contents, different consumer).
--- Every function is CREATE OR REPLACE so re-runs are safe.
+-- Run this in the Supabase SQL Editor AFTER schema.sql and the v0.5.0
+-- functions.sql are already applied. This migration is idempotent
+-- (every function is CREATE OR REPLACE) and can be re-run safely.
 --
 -- What it introduces:
 --   1. sf_check_eligibility — server-side mirror of src/lib/eligibility.ts
@@ -20,38 +18,6 @@
 --   7. sf_promote_member    — manual promotion now re-checks eligibility and
 --                             consumes credit
 --   8. sf_unpromote_member  — refunds credit when reverting a manual promotion
-
--- ═══ WAITLIST PERFORMANCE INDEX ═════════════════════════════════════════
-CREATE INDEX IF NOT EXISTS idx_waitlist_position
-  ON class_bookings (class_id, waitlist_position)
-  WHERE booking_status = 'waitlisted' AND is_active = true;
-
--- ═══ HELPER: count active booked (non-waitlisted) entries ═══════════════
--- Used inside multiple functions. Excludes waitlisted, cancelled, late_cancel.
-CREATE OR REPLACE FUNCTION sf_count_booked(p_class_id uuid)
-RETURNS integer LANGUAGE sql STABLE AS $$
-  SELECT count(*)::integer
-  FROM class_bookings
-  WHERE class_id = p_class_id
-    AND is_active = true
-    AND booking_status NOT IN ('waitlisted', 'cancelled', 'late_cancel');
-$$;
-
--- ═══ HELPER: resequence waitlist positions ══════════════════════════════
-CREATE OR REPLACE FUNCTION sf_resequence_waitlist(p_class_id uuid)
-RETURNS void LANGUAGE sql AS $$
-  WITH numbered AS (
-    SELECT id, ROW_NUMBER() OVER (ORDER BY waitlist_position ASC) AS new_pos
-    FROM class_bookings
-    WHERE class_id = p_class_id
-      AND booking_status = 'waitlisted'
-      AND is_active = true
-  )
-  UPDATE class_bookings cb
-  SET waitlist_position = n.new_pos, updated_at = now()
-  FROM numbered n
-  WHERE cb.id = n.id AND cb.waitlist_position IS DISTINCT FROM n.new_pos;
-$$;
 
 -- ═══ HELPER: server-side eligibility check ═════════════════════════════
 -- Mirrors src/lib/eligibility.ts exactly. Returns JSONB, never throws.

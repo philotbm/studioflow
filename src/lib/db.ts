@@ -308,15 +308,62 @@ async function callRpc<T>(name: string, params: Record<string, unknown>): Promis
   return result;
 }
 
+/**
+ * Raw shape of what the v0.7.0 sf_book_member RPC returns when the server
+ * rejects the booking on economic grounds. The server is the truth-source;
+ * the client never derives these fields locally.
+ */
+export type BlockedBookingResponse = {
+  status: "blocked";
+  reason: string;
+  entitlementLabel: string;
+  creditsRemaining: number | null;
+  actionHint: string;
+};
+
+export type BookingOutcome =
+  | { status: "booked" | "waitlisted"; alreadyExists?: boolean }
+  | BlockedBookingResponse;
+
 export async function bookMemberIntoClass(
   classSlug: string,
   memberSlug: string,
-): Promise<{ status: "booked" | "waitlisted"; alreadyExists?: boolean }> {
-  const result = await callRpc<{
-    status: string;
-    booking_id: string;
+): Promise<BookingOutcome> {
+  // v0.7.0: the server can now legitimately reply with status "blocked"
+  // and a structured reason. This is NOT an error — it's a normal
+  // domain outcome — so we bypass the callRpc helper (which would throw
+  // on error-keyed responses) and inspect the raw response ourselves.
+  const { data, error } = await requireClient().rpc("sf_book_member", {
+    p_class_slug: classSlug,
+    p_member_slug: memberSlug,
+  });
+  if (error) {
+    console.error("[sf_book_member] RPC failed:", error.message);
+    throw new Error(`sf_book_member failed: ${error.message}`);
+  }
+  const result = (data ?? {}) as {
+    status?: string;
+    booking_id?: string;
     already_exists?: boolean;
-  }>("sf_book_member", { p_class_slug: classSlug, p_member_slug: memberSlug });
+    reason?: string;
+    entitlement_label?: string;
+    credits_remaining?: number | null;
+    action_hint?: string;
+    error?: string;
+  };
+  if (result.error) {
+    throw new Error(result.error);
+  }
+  if (result.status === "blocked") {
+    return {
+      status: "blocked",
+      reason: result.reason ?? "Booking blocked",
+      entitlementLabel: result.entitlement_label ?? "",
+      creditsRemaining:
+        result.credits_remaining === undefined ? null : result.credits_remaining,
+      actionHint: result.action_hint ?? "",
+    };
+  }
   return {
     status: result.status as "booked" | "waitlisted",
     alreadyExists: result.already_exists ?? false,

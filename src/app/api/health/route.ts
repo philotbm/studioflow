@@ -4,7 +4,7 @@ export function GET() {
   return NextResponse.json({
     status: "ok",
     system: "studioflow",
-    version: "v0.6.0",
-    release: "Economic Engine Foundation",
+    version: "v0.7.0",
+    release: "Economic Engine — Consumption + Server Enforcement",
   });
 }
