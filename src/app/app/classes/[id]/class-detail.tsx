@@ -7,23 +7,25 @@ import type { Attendee, WaitlistEntry, Lifecycle } from "../data";
 import type { AuditEvent } from "@/lib/db";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
 
-// ── Status labels/colours ───────────────────────────────────────────────
+// ── Canonical attendance status language (v0.8.2.1) ─────────────────────
+// These labels are the ONLY visible attendance language in the operator
+// view. They match the instructor view's labels verbatim so there is no
+// drift between surfaces. If you need to add a new state, extend both
+// surfaces together and update src/app/app/classes/data.ts#Attendee.
 const statusLabel: Record<string, string> = {
   booked: "Booked",
   attended: "Attended",
+  no_show: "No-show",
   late_cancel: "Late cancel",
-  no_show: "No show",
-  checked_in: "Checked in",
-  not_checked_in: "Not checked in",
+  cancelled: "Cancelled",
 };
 
 const statusColor: Record<string, string> = {
-  booked: "text-white/50",
+  booked: "text-white/60",
   attended: "text-green-400",
-  late_cancel: "text-red-400",
   no_show: "text-red-400",
-  checked_in: "text-green-400",
-  not_checked_in: "text-white/50",
+  late_cancel: "text-red-400",
+  cancelled: "text-white/40",
 };
 
 const lifecycleLabel: Record<string, string> = {
@@ -263,53 +265,6 @@ function AttendeeRow({
   );
 }
 
-// ── Live attendees (with persistent check-in) ───────────────────────────
-function LiveAttendees({
-  classId,
-  attendees,
-  onCheckIn,
-}: {
-  classId: string;
-  attendees: Attendee[];
-  onCheckIn: (classSlug: string, memberSlug: string) => Promise<void>;
-}) {
-  return (
-    <ul className="mt-3 flex flex-col gap-2">
-      {attendees.map((a, i) => (
-        <li
-          key={a.memberId ?? i}
-          className="flex items-center justify-between rounded border border-white/10 px-4 py-2"
-        >
-          {a.memberId ? (
-            <Link
-              href={`/app/members/${a.memberId}`}
-              className="text-sm hover:underline"
-            >
-              {a.name}
-            </Link>
-          ) : (
-            <span className="text-sm">{a.name}</span>
-          )}
-          {a.status === "checked_in" ? (
-            <span className="text-xs text-green-400">Checked in</span>
-          ) : a.status === "not_checked_in" && a.memberId ? (
-            <button
-              onClick={() => onCheckIn(classId, a.memberId!)}
-              className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40"
-            >
-              Check in
-            </button>
-          ) : (
-            <span className="text-xs text-white/40">
-              {statusLabel[a.status] ?? a.status}
-            </span>
-          )}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 // ── Signal pill ─────────────────────────────────────────────────────────
 function SignalPill({ signal }: { signal: WaitlistSignal }) {
   const toneClass =
@@ -439,8 +394,12 @@ function BookingAuditLog({ classSlug }: { classSlug: string }) {
       case "booked":
       case "promoted_manual":
       case "promoted_auto":
-      case "checked_in":
+      case "attendance_attended":
         return "text-green-400/80";
+      case "attendance_no_show":
+        return "text-red-400/80";
+      case "attendance_reverted":
+        return "text-white/50";
       case "cancelled":
       case "unpromoted":
       case "waitlisted":
@@ -479,6 +438,9 @@ function BookingAuditLog({ classSlug }: { classSlug: string }) {
 
 // ── Page component ──────────────────────────────────────────────────────
 export default function ClassDetail({ id }: { id: string }) {
+  // v0.8.2.1: checkInAttendee is intentionally not consumed here. The
+  // check-in UI was removed as part of the attendance-language
+  // unification; check-in returns as a first-class concept in v0.8.3.
   const {
     getClass,
     getMember,
@@ -486,7 +448,6 @@ export default function ClassDetail({ id }: { id: string }) {
     cancelBooking,
     promoteEntry,
     unpromoteEntry,
-    checkInAttendee,
   } = useStore();
 
   const cls = getClass(id);
@@ -507,7 +468,6 @@ export default function ClassDetail({ id }: { id: string }) {
 
   const displayBooked = visibleAttendees.length;
   const isFull = displayBooked >= cls.capacity;
-  const isLive = cls.lifecycle === "live";
   const isUpcoming = cls.lifecycle === "upcoming";
 
   const nonAutoAttendeeCount = cls.attendees.filter(
@@ -539,7 +499,7 @@ export default function ClassDetail({ id }: { id: string }) {
           <span
             className={`rounded-full border px-2.5 py-0.5 text-xs ${lifecycleStyle[cls.lifecycle]}`}
           >
-            {isLive && (
+            {cls.lifecycle === "live" && (
               <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
             )}
             {lifecycleLabel[cls.lifecycle]}
@@ -591,26 +551,27 @@ export default function ClassDetail({ id }: { id: string }) {
           />
         )}
 
-        {isLive ? (
-          <LiveAttendees
-            classId={cls.id}
-            attendees={visibleAttendees}
-            onCheckIn={checkInAttendee}
-          />
-        ) : (
-          <ul className="mt-3 flex flex-col gap-2">
-            {visibleAttendees.map((a, i) => (
-              <AttendeeRow
-                key={a.memberId ?? i}
-                a={a}
-                classId={cls.id}
-                lifecycle={cls.lifecycle}
-                onUnpromote={unpromoteEntry}
-                onCancel={cancelBooking}
-              />
-            ))}
-          </ul>
-        )}
+        {/*
+          v0.8.2.1: single unified attendee list for all lifecycles.
+          Live classes no longer have a separate check-in branch — the
+          operator uses the "Open Instructor View →" link above to run
+          attendance, and this list just displays the canonical status
+          (Booked / Attended / No-show / Late cancel) consistently.
+          Cancel is gated inside AttendeeRow on isUpcoming, so live and
+          completed classes render a read-only status column here.
+        */}
+        <ul className="mt-3 flex flex-col gap-2">
+          {visibleAttendees.map((a, i) => (
+            <AttendeeRow
+              key={a.memberId ?? i}
+              a={a}
+              classId={cls.id}
+              lifecycle={cls.lifecycle}
+              onUnpromote={unpromoteEntry}
+              onCancel={cancelBooking}
+            />
+          ))}
+        </ul>
       </div>
 
       {cls.waitlist && cls.waitlist.length > 0 && (

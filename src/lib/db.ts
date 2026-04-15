@@ -108,24 +108,20 @@ function mapBookingsToAttendees(
   bookings: BookingJoined[],
   promotionMeta: Map<string, number>,
 ): Attendee[] {
+  // v0.8.2.1: the canonical visible attendance language is just the four
+  // real booking_status values. There is no "checked_in"/"not_checked_in"
+  // display overlay anymore — the check_in_at timestamp column still
+  // exists in the DB from earlier releases but does not affect the
+  // visible status. Check-in as a first-class state returns in v0.8.3.
   return bookings
     .filter((b) => b.booking_status !== "waitlisted" && b.is_active)
     .map((b) => {
-      let status: Attendee["status"];
-      if (b.booking_status === "booked" && b.checked_in_at) {
-        status = "checked_in";
-      } else if (b.booking_status === "booked" && !b.checked_in_at) {
-        status = "not_checked_in";
-      } else {
-        status = b.booking_status as Attendee["status"];
-      }
-
       const originalPosition = promotionMeta.get(b.id);
 
       return {
         name: b.members?.full_name ?? "Unknown",
         memberId: b.members?.slug,
-        status,
+        status: b.booking_status as Attendee["status"],
         ...(b.promotion_source
           ? {
               promotedFromPosition: originalPosition,
