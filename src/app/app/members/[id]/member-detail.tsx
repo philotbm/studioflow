@@ -681,7 +681,7 @@ export default function MemberDetail({ id }: { id: string }) {
       </div>
 
       {/* Opportunity signals */}
-      {member.opportunitySignals.length > 0 && (
+      {(member.opportunitySignals ?? []).length > 0 && (
         <div className="mt-6">
           <h2 className="text-sm font-medium text-white/70">Opportunity signals</h2>
           <div className="mt-3 flex flex-col gap-2">
@@ -789,11 +789,11 @@ export default function MemberDetail({ id }: { id: string }) {
           )}
         </div>
 
-        {ins.classMix.length > 0 && (
+        {(ins.classMix ?? []).length > 0 && (
           <div className="mt-4">
             <span className="text-xs text-white/40">Class mix</span>
             <div className="mt-1.5 flex flex-wrap gap-2">
-              {ins.classMix.map((c) => (
+              {(ins.classMix ?? []).map((c) => (
                 <span
                   key={c.label}
                   className="rounded-full border border-white/10 px-2.5 py-0.5 text-xs text-white/60"
@@ -806,23 +806,30 @@ export default function MemberDetail({ id }: { id: string }) {
         )}
       </div>
 
-      {/* Purchase Insights */}
-      <div className="mt-8">
-        <h2 className="text-sm font-medium text-white/70">Purchase insights</h2>
-        <div className="mt-2 mb-3 text-xs text-white/40">
-          Buyer pattern: <span className="text-white/60">{pi.buyerPattern}</span>
-        </div>
+      {/* Purchase Insights — v0.9.0 defensive: QA fixture members
+          (and any member with minimal purchase_insights_json) have no
+          activePlan / previousPurchases. Skip the whole section in
+          that case so the page still renders. */}
+      {pi.activePlan && (
+        <div className="mt-8">
+          <h2 className="text-sm font-medium text-white/70">Purchase insights</h2>
+          {pi.buyerPattern && (
+            <div className="mt-2 mb-3 text-xs text-white/40">
+              Buyer pattern: <span className="text-white/60">{pi.buyerPattern}</span>
+            </div>
+          )}
 
-        <div className="flex flex-col gap-4">
-          <PurchaseCard entry={pi.activePlan} />
-          {pi.previousPurchases.map((p, i) => (
-            <PurchaseCard key={i} entry={p} />
-          ))}
+          <div className="flex flex-col gap-4">
+            <PurchaseCard entry={pi.activePlan} />
+            {(pi.previousPurchases ?? []).map((p, i) => (
+              <PurchaseCard key={i} entry={p} />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* History */}
-      {member.history.length > 0 && (
+      {(member.history ?? []).length > 0 && (
         <div className="mt-8">
           <h2 className="text-sm font-medium text-white/70">History</h2>
           <ul className="mt-3 flex flex-col gap-2">
