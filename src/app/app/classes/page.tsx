@@ -3,10 +3,62 @@
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import type { StudioClass } from "./data";
+import {
+  reconcileClass,
+  type ReconciliationSummary,
+  type ReconciliationTone,
+} from "./reconciliation";
+
+/**
+ * v0.8.5: compact list-level indicator. Pulls the headline from the
+ * reconciliation summary and colour-codes it by tone. We deliberately
+ * only surface the indicator when it says something actionable:
+ *
+ *   - alert / watch: always shown — these are the ones the operator
+ *     needs to see when scanning the list.
+ *   - good: shown for completed classes where a strong outcome is
+ *     informative, and for upcoming classes at fully-booked so the
+ *     operator knows capacity is gone.
+ *   - neutral: suppressed to keep the list quiet.
+ */
+const TONE_PILL: Record<ReconciliationTone, string> = {
+  good: "border-green-400/30 text-green-300/90",
+  neutral: "border-white/15 text-white/50",
+  watch: "border-amber-400/30 text-amber-300/90",
+  alert: "border-red-400/30 text-red-300/90",
+};
+
+function shouldShowPill(
+  summary: ReconciliationSummary,
+  lifecycle: StudioClass["lifecycle"],
+): boolean {
+  if (summary.tone === "alert" || summary.tone === "watch") return true;
+  // For "good" tones, only surface the ones an operator cares about at
+  // a glance: completed-class positive outcomes and fully-booked
+  // upcoming classes. Everything else is noise.
+  if (summary.tone === "good") {
+    if (lifecycle === "completed") return true;
+    if (summary.signals.some((s) => s.label === "Fully booked")) return true;
+  }
+  return false;
+}
+
+function ListSignalPill({ summary }: { summary: ReconciliationSummary }) {
+  return (
+    <span
+      className={`rounded-full border px-2 py-0.5 text-[11px] ${TONE_PILL[summary.tone]}`}
+      title={summary.interpretation}
+    >
+      {summary.headline}
+    </span>
+  );
+}
 
 function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
   const isFull = cls.booked >= cls.capacity;
   const isUpcoming = cls.lifecycle === "upcoming";
+  const summary = reconcileClass(cls);
+  const pillVisible = shouldShowPill(summary, cls.lifecycle);
   return (
     <li>
       <Link
@@ -38,18 +90,21 @@ function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
             </span>
           )}
         </div>
-        <span
-          className={`mt-1 text-xs sm:mt-0 ${
-            isFull ? (muted ? "text-green-400/50" : "text-green-400") : muted ? "text-white/30" : "text-white/50"
-          }`}
-        >
-          {cls.booked}/{cls.capacity} booked
-          {cls.waitlistCount > 0 && (
-            <span className={muted ? "text-white/20" : "text-white/40"}>
-              {" "}&middot; {cls.waitlistCount} on waitlist
-            </span>
-          )}
-        </span>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {pillVisible && <ListSignalPill summary={summary} />}
+          <span
+            className={`text-xs ${
+              isFull ? (muted ? "text-green-400/50" : "text-green-400") : muted ? "text-white/30" : "text-white/50"
+            }`}
+          >
+            {cls.booked}/{cls.capacity} booked
+            {cls.waitlistCount > 0 && (
+              <span className={muted ? "text-white/20" : "text-white/40"}>
+                {" "}&middot; {cls.waitlistCount} on waitlist
+              </span>
+            )}
+          </span>
+        </div>
       </Link>
     </li>
   );
