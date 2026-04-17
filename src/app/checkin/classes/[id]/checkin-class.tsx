@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useStore } from "@/lib/store";
 import type { Attendee } from "@/app/app/classes/data";
+import QaFixtureBanner from "@/app/qa/QaFixtureBanner";
 
 /**
  * v0.8.4 client check-in page.
@@ -59,25 +60,30 @@ export default function CheckInClass({ id }: { id: string }) {
 
   if (loading && !cls) {
     return (
-      <main className="mx-auto max-w-md pt-12 text-center">
-        <p className="text-white/40">Loading class...</p>
+      <main className="mx-auto max-w-md">
+        <QaFixtureBanner classSlug={id} />
+        <p className="pt-12 text-center text-white/40">Loading class...</p>
       </main>
     );
   }
 
   if (storeError) {
     return (
-      <main className="mx-auto max-w-md pt-12 text-center">
-        <p className="text-sm text-red-400/90">Could not load class data.</p>
-        <p className="mt-2 text-xs text-white/30">{storeError}</p>
+      <main className="mx-auto max-w-md">
+        <QaFixtureBanner classSlug={id} />
+        <p className="pt-12 text-center text-sm text-red-400/90">
+          Could not load class data.
+        </p>
+        <p className="mt-2 text-center text-xs text-white/30">{storeError}</p>
       </main>
     );
   }
 
   if (!cls) {
     return (
-      <main className="mx-auto max-w-md pt-12 text-center">
-        <p className="text-sm text-white/60">Class not found.</p>
+      <main className="mx-auto max-w-md">
+        <QaFixtureBanner classSlug={id} />
+        <p className="pt-12 text-center text-sm text-white/60">Class not found.</p>
       </main>
     );
   }
@@ -86,6 +92,7 @@ export default function CheckInClass({ id }: { id: string }) {
   if (cls.checkInStatus === "pre_window") {
     return (
       <main className="mx-auto max-w-md">
+        <QaFixtureBanner classSlug={cls.id} />
         <h1 className="text-xl font-semibold">{cls.name}</h1>
         <p className="mt-1 text-xs text-white/50">
           {cls.time} · {cls.instructor}
@@ -106,6 +113,7 @@ export default function CheckInClass({ id }: { id: string }) {
   if (cls.checkInStatus === "closed") {
     return (
       <main className="mx-auto max-w-md">
+        <QaFixtureBanner classSlug={cls.id} />
         <h1 className="text-xl font-semibold">{cls.name}</h1>
         <p className="mt-1 text-xs text-white/50">
           {cls.time} · {cls.instructor}
@@ -162,6 +170,7 @@ export default function CheckInClass({ id }: { id: string }) {
   if (result?.kind === "ok") {
     return (
       <main className="mx-auto max-w-md">
+        <QaFixtureBanner classSlug={cls.id} />
         <h1 className="text-xl font-semibold">{cls.name}</h1>
         <p className="mt-1 text-xs text-white/50">
           {cls.time} · {cls.instructor}
@@ -213,6 +222,7 @@ export default function CheckInClass({ id }: { id: string }) {
 
   return (
     <main className="mx-auto max-w-md">
+      <QaFixtureBanner classSlug={cls.id} />
       <h1 className="text-xl font-semibold">{cls.name}</h1>
       <p className="mt-1 flex items-center gap-2 text-xs text-white/50">
         <span className="inline-flex items-center gap-1 rounded-full border border-green-400/30 px-2 py-0.5 text-[11px] text-green-400">

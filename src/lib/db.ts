@@ -773,6 +773,102 @@ export type LedgerEntry = {
   createdAt: string;
 };
 
+// ── v0.8.4.1: QA fixtures + temporal test control ────────────────────
+
+/**
+ * Slugs of the deterministic QA fixture classes shipped in v0.8.4.1.
+ * Centralised here so the UI + QA landing page share one source of
+ * truth. Every entry has a corresponding class row seeded by the
+ * migration and refreshed to spec by sf_refresh_qa_fixtures.
+ */
+export const QA_FIXTURES = [
+  {
+    slug: "qa-too-early",
+    scenario: "too-early",
+    label: "Too early — check-in not open yet",
+    description:
+      "Pre-window state. The client check-in page should say the window hasn't opened and show the clock time it will.",
+  },
+  {
+    slug: "qa-open",
+    scenario: "open",
+    label: "Check-in open — fresh roster",
+    description:
+      "Three booked QA members ready to self-check-in. The first tap flips the row and writes a single audit row.",
+  },
+  {
+    slug: "qa-already-in",
+    scenario: "already-in",
+    label: "Already checked in — idempotent",
+    description:
+      "QA Alex is pre-checked-in. Tapping the row demonstrates the idempotent success path — no duplicate audit row.",
+  },
+  {
+    slug: "qa-closed",
+    scenario: "closed",
+    label: "Closed — check-in blocked",
+    description:
+      "Class ended 30 min ago. Client check-in is blocked; staff correction is the only path.",
+  },
+  {
+    slug: "qa-correction",
+    scenario: "correction",
+    label: "Completed correction path",
+    description:
+      "Ended 2 h ago with mixed checked_in / no_show rows. Use the instructor view to flip statuses and observe correction_* events appended to the audit log.",
+  },
+] as const satisfies ReadonlyArray<{
+  slug: string;
+  scenario: "too-early" | "open" | "already-in" | "closed" | "correction";
+  label: string;
+  description: string;
+}>;
+
+export type QaScenario = (typeof QA_FIXTURES)[number]["scenario"];
+
+/**
+ * Look up the QA scenario label for a class slug, or null for any
+ * production (non-QA) slug. Used by the /checkin and /instructor
+ * pages to render a small "QA: X" banner on fixture pages without
+ * mixing QA concerns into the production UI code paths.
+ */
+export function qaFixtureFor(slug: string): (typeof QA_FIXTURES)[number] | null {
+  return QA_FIXTURES.find((f) => f.slug === slug) ?? null;
+}
+
+export type RefreshQaFixturesResult = {
+  ok: true;
+  refreshedAt: string;
+  fixtures: string[];
+};
+
+/**
+ * Idempotent fixture refresh. Snaps every qa-* class back to its
+ * documented state relative to the server's now(). Safe to call on
+ * every /qa page load; safe to call concurrently (a later call simply
+ * rewrites the same rows).
+ */
+export async function refreshQaFixtures(): Promise<RefreshQaFixturesResult> {
+  const { data, error } = await requireClient().rpc("sf_refresh_qa_fixtures");
+  if (error) {
+    console.error("[sf_refresh_qa_fixtures] RPC failed:", error.message);
+    throw new Error(`sf_refresh_qa_fixtures failed: ${error.message}`);
+  }
+  const result = (data ?? {}) as {
+    ok?: boolean;
+    refreshed_at?: string;
+    fixtures?: string[];
+    error?: string;
+  };
+  if (result.error) throw new Error(result.error);
+  if (!result.ok) throw new Error("sf_refresh_qa_fixtures: unexpected response");
+  return {
+    ok: true,
+    refreshedAt: result.refreshed_at ?? new Date().toISOString(),
+    fixtures: result.fixtures ?? [],
+  };
+}
+
 /**
  * Fetch the most recent credit-ledger rows for a given member, newest
  * first. Used by the member-detail recent-ledger panel.

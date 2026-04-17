@@ -6,6 +6,7 @@ import QRCode from "qrcode";
 import { useStore } from "@/lib/store";
 import type { Attendee } from "@/app/app/classes/data";
 import type { AttendanceOutcome, CheckInSource } from "@/lib/db";
+import QaFixtureBanner from "@/app/qa/QaFixtureBanner";
 
 /**
  * v0.8.4 Instructor View
@@ -282,19 +283,21 @@ export default function InstructorClass({ id }: { id: string }) {
 
   if (loading && !cls) {
     return (
-      <main className="mx-auto max-w-2xl pt-12 text-center">
-        <p className="text-white/40">Loading class...</p>
+      <main className="mx-auto max-w-2xl">
+        <QaFixtureBanner classSlug={id} />
+        <p className="pt-12 text-center text-white/40">Loading class...</p>
       </main>
     );
   }
 
   if (!cls) {
     return (
-      <main className="mx-auto max-w-2xl pt-12 text-center">
-        <p className="text-white/40">Class not found.</p>
+      <main className="mx-auto max-w-2xl">
+        <QaFixtureBanner classSlug={id} />
+        <p className="pt-12 text-center text-white/40">Class not found.</p>
         <Link
           href="/instructor"
-          className="mt-4 inline-block text-xs text-white/40 hover:text-white/70"
+          className="mt-4 inline-block text-center text-xs text-white/40 hover:text-white/70"
         >
           &larr; Back
         </Link>
@@ -370,6 +373,7 @@ export default function InstructorClass({ id }: { id: string }) {
 
   return (
     <main className="mx-auto max-w-2xl">
+      <QaFixtureBanner classSlug={cls.id} />
       <Link
         href={`/app/classes/${cls.id}`}
         className="text-xs text-white/40 hover:text-white/70"
