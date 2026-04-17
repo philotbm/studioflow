@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useStore, formatRelative } from "@/lib/store";
 import type { Attendee, WaitlistEntry, Lifecycle } from "../data";
-import type { AuditEvent } from "@/lib/db";
+import { qaFixtureFor, type AuditEvent } from "@/lib/db";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
+import QaFixtureBanner from "@/app/qa/QaFixtureBanner";
 
 // ── Canonical attendance status language (v0.8.4) ───────────────────────
 // These labels are the ONLY visible attendance language in the operator
@@ -452,9 +453,11 @@ export default function ClassDetail({ id }: { id: string }) {
     promoteEntry,
     unpromoteEntry,
     finaliseClass,
+    hydrated,
   } = useStore();
 
   const cls = getClass(id);
+  const isQaFixture = qaFixtureFor(id) !== null;
 
   // v0.8.3 pull-based class close: when the operator views a completed
   // class, we idempotently sweep any still-booked rows to no_show. The
@@ -473,9 +476,28 @@ export default function ClassDetail({ id }: { id: string }) {
   }, [cls?.lifecycle, cls?.id, finaliseClass]);
 
   if (!cls) {
+    if (!hydrated) {
+      return (
+        <main className="mx-auto max-w-2xl pt-12 text-center">
+          <p className="text-white/40">Loading class...</p>
+        </main>
+      );
+    }
+    // v0.8.4.2: store hydrated but class is absent. Distinguish QA
+    // fixture gap from a genuine not-found so the operator view no
+    // longer hangs indefinitely on "Loading class...".
     return (
-      <main className="mx-auto max-w-2xl pt-12 text-center">
-        <p className="text-white/40">Loading class...</p>
+      <main className="mx-auto max-w-2xl">
+        <QaFixtureBanner classSlug={id} missing={isQaFixture} />
+        {!isQaFixture && (
+          <p className="pt-12 text-center text-white/40">Class not found.</p>
+        )}
+        <Link
+          href={isQaFixture ? "/qa" : "/app/classes"}
+          className="mt-4 inline-block text-xs text-white/40 hover:text-white/70"
+        >
+          &larr; {isQaFixture ? "Back to QA matrix" : "Back to classes"}
+        </Link>
       </main>
     );
   }

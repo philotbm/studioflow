@@ -839,33 +839,81 @@ export function qaFixtureFor(slug: string): (typeof QA_FIXTURES)[number] | null 
 export type RefreshQaFixturesResult = {
   ok: true;
   refreshedAt: string;
-  fixtures: string[];
+  fixtures: readonly string[];
+  mode: "direct";
+};
+
+export type RefreshQaFixturesError = {
+  ok: false;
+  stage: string;
+  message: string;
 };
 
 /**
- * Idempotent fixture refresh. Snaps every qa-* class back to its
- * documented state relative to the server's now(). Safe to call on
- * every /qa page load; safe to call concurrently (a later call simply
- * rewrites the same rows).
+ * Idempotent fixture refresh. Calls the /api/qa/refresh API route,
+ * which in v0.8.4.2 drives the whole fixture set via direct table
+ * upserts and no longer depends on the sf_refresh_qa_fixtures RPC.
+ * Returns a typed success or a typed error — the UI can show the
+ * specific stage that failed rather than a generic message.
  */
-export async function refreshQaFixtures(): Promise<RefreshQaFixturesResult> {
-  const { data, error } = await requireClient().rpc("sf_refresh_qa_fixtures");
-  if (error) {
-    console.error("[sf_refresh_qa_fixtures] RPC failed:", error.message);
-    throw new Error(`sf_refresh_qa_fixtures failed: ${error.message}`);
+export async function refreshQaFixtures(): Promise<
+  RefreshQaFixturesResult | RefreshQaFixturesError
+> {
+  try {
+    const res = await fetch("/api/qa/refresh", { method: "POST" });
+    const body = (await res.json()) as {
+      ok?: boolean;
+      stage?: string;
+      error?: string;
+      refreshedAt?: string;
+      fixtures?: string[];
+      mode?: string;
+    };
+    if (res.ok && body.ok) {
+      return {
+        ok: true,
+        refreshedAt: body.refreshedAt ?? new Date().toISOString(),
+        fixtures: body.fixtures ?? [],
+        mode: "direct",
+      };
+    }
+    return {
+      ok: false,
+      stage: body.stage ?? "unknown",
+      message: body.error ?? `Refresh failed with HTTP ${res.status}`,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      stage: "transport",
+      message: e instanceof Error ? e.message : "Network error contacting /api/qa/refresh",
+    };
   }
-  const result = (data ?? {}) as {
-    ok?: boolean;
-    refreshed_at?: string;
-    fixtures?: string[];
-    error?: string;
-  };
-  if (result.error) throw new Error(result.error);
-  if (!result.ok) throw new Error("sf_refresh_qa_fixtures: unexpected response");
+}
+
+/**
+ * Read-only readiness probe. Returns what the DB has right now —
+ * counts of the expected fixture rows and the slugs that are still
+ * missing. Used by /qa to reflect the true environment state rather
+ * than implying everything is fine when it isn't.
+ */
+export type QaEnvironmentStatus = {
+  ready: boolean;
+  reason?: string;
+  missingClasses: string[];
+  missingMembers: string[];
+  fixtureCount: number;
+};
+
+export async function fetchQaStatus(): Promise<QaEnvironmentStatus> {
+  const res = await fetch("/api/qa/status", { cache: "no-store" });
+  const body = (await res.json()) as Partial<QaEnvironmentStatus>;
   return {
-    ok: true,
-    refreshedAt: result.refreshed_at ?? new Date().toISOString(),
-    fixtures: result.fixtures ?? [],
+    ready: body.ready ?? false,
+    reason: body.reason,
+    missingClasses: body.missingClasses ?? [],
+    missingMembers: body.missingMembers ?? [],
+    fixtureCount: body.fixtureCount ?? 0,
   };
 }
 
