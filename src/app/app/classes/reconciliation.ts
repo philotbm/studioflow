@@ -75,7 +75,13 @@ function countAttendees(cls: StudioClass) {
   let noShow = 0;
   let lateCancel = 0;
   let pending = 0;
-  for (const a of cls.attendees) {
+  // v0.8.5.1: defensive fallback. StudioClass.attendees is declared
+  // non-null in the type, but belt-and-braces against a malformed
+  // mapper result so the whole operator page never crashes on a
+  // single bad class row.
+  const attendees = Array.isArray(cls.attendees) ? cls.attendees : [];
+  for (const a of attendees) {
+    if (!a || typeof a.status !== "string") continue;
     switch (a.status) {
       case "checked_in":
         checkedIn++;
@@ -440,14 +446,51 @@ function buildSummary(a: SummaryArgs): ReconciliationSummary {
 
 /** Top-level entry point — dispatch by lifecycle. */
 export function reconcileClass(cls: StudioClass): ReconciliationSummary {
-  switch (cls.lifecycle) {
-    case "completed":
-      return reconcileCompleted(cls);
-    case "live":
-      return reconcileLive(cls);
-    case "upcoming":
-      return reconcileUpcoming(cls);
+  // v0.8.5.1: tolerate an unexpected lifecycle value (e.g. a future
+  // state not yet known to this module) by falling back to a neutral
+  // summary instead of throwing. Every caller handles a neutral-tone
+  // summary; a thrown exception here crashes the operator page.
+  try {
+    switch (cls.lifecycle) {
+      case "completed":
+        return reconcileCompleted(cls);
+      case "live":
+        return reconcileLive(cls);
+      case "upcoming":
+        return reconcileUpcoming(cls);
+      default:
+        return neutralFallback(cls, "Unknown lifecycle");
+    }
+  } catch (e) {
+    console.warn("[reconcileClass] derivation failed:", e);
+    return neutralFallback(cls, "Reconciliation unavailable");
   }
+}
+
+function neutralFallback(
+  cls: StudioClass,
+  reason: string,
+): ReconciliationSummary {
+  const capacity = typeof cls.capacity === "number" ? cls.capacity : 0;
+  return {
+    checkedInCount: 0,
+    noShowCount: 0,
+    lateCancelCount: 0,
+    pendingCount: 0,
+    waitlistCount: typeof cls.waitlistCount === "number" ? cls.waitlistCount : 0,
+    capacity,
+    rosterCount: 0,
+    plannedCount: 0,
+    fillRate: null,
+    attendanceRate: null,
+    noShowRate: null,
+    lateCancelShare: null,
+    signals: [{ label: reason, tone: "neutral" }],
+    tone: "neutral",
+    headline: reason,
+    interpretation:
+      "No reconciliation available for this class — attendance counts will appear once data is healthy.",
+  };
 }
 
 export { formatPct };
