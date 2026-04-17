@@ -1,10 +1,11 @@
--- StudioFlow v0.8.4 — Economic Engine + Check-In Truth (canonical)
+-- StudioFlow v0.8.4.1 — Economic Engine + Check-In Truth (canonical)
 --
 -- This file is the CURRENT STATE of all StudioFlow PL/pgSQL — run it in
 -- the Supabase SQL Editor after schema.sql when setting up a fresh
 -- project. For incremental deploys the per-version migrations live at
 -- supabase/v0.8.0_migration.sql, supabase/v0.8.2_migration.sql,
--- supabase/v0.8.3_migration.sql, and supabase/v0.8.4_migration.sql.
+-- supabase/v0.8.3_migration.sql, supabase/v0.8.4_migration.sql, and
+-- supabase/v0.8.4.1_migration.sql.
 -- Every function is CREATE OR REPLACE and the credit_transactions
 -- table / v_members_with_access view are idempotent so re-runs are safe.
 --
@@ -37,6 +38,12 @@
 --   - class_bookings.booking_status constraint drops legacy 'attended'.
 --     All rows were normalised in v0.8.3; v0.8.4 locks the vocabulary
 --     so the app speaks one attendance language end to end.
+--
+-- v0.8.4.1 added deterministic QA fixtures:
+--   - sf_refresh_qa_fixtures — idempotent RPC that snaps a fixed set of
+--     qa-* classes back to their intended state relative to now().
+--     Production data is untouched; this lives purely to give live QA a
+--     stable too-early / open / already-in / closed / correction matrix.
 
 -- ═══ WAITLIST PERFORMANCE INDEX ═════════════════════════════════════════
 CREATE INDEX IF NOT EXISTS idx_waitlist_position
@@ -1092,6 +1099,130 @@ BEGIN
     'ok', true,
     'outcome', p_outcome,
     'previous', v_booking.booking_status
+  );
+END;
+$$;
+
+-- ═══ 6. sf_refresh_qa_fixtures (v0.8.4.1) ══════════════════════════════
+-- Snaps the deterministic QA fixture set back to its documented state
+-- relative to now(). Scoped to qa-* class ids only — production classes,
+-- members, and audit are never touched.
+--
+-- Guarantees after one call:
+--   qa-too-early   pre-window (starts in 60 min, 15-min window)
+--   qa-open        in-window, three fresh booked QA members
+--   qa-already-in  in-window, qa-alex pre-checked-in (idempotent demo)
+--   qa-closed      ended 30 min ago, one checked_in + one no_show
+--   qa-correction  ended 2 h ago, mixed state for correction testing
+--
+-- booking_events rows for QA fixture classes are wiped on each refresh
+-- so repeat QA cycles start clean. This reset is explicit fixture
+-- infrastructure — it does NOT violate the append-only audit
+-- invariant, which applies to production class ids only.
+CREATE OR REPLACE FUNCTION sf_refresh_qa_fixtures()
+RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  v_now      timestamptz := now();
+  v_qa_class uuid[] := ARRAY[
+    'd0000000-0000-0000-0000-000000000001'::uuid,
+    'd0000000-0000-0000-0000-000000000002'::uuid,
+    'd0000000-0000-0000-0000-000000000003'::uuid,
+    'd0000000-0000-0000-0000-000000000004'::uuid,
+    'd0000000-0000-0000-0000-000000000005'::uuid
+  ];
+  v_alex  uuid := 'c0000000-0000-0000-0000-000000000001';
+  v_blake uuid := 'c0000000-0000-0000-0000-000000000002';
+  v_casey uuid := 'c0000000-0000-0000-0000-000000000003';
+BEGIN
+  UPDATE classes SET
+    starts_at = v_now + interval '60 minutes',
+    ends_at   = v_now + interval '120 minutes',
+    check_in_window_minutes = 15,
+    updated_at = v_now
+  WHERE id = 'd0000000-0000-0000-0000-000000000001';
+
+  UPDATE classes SET
+    starts_at = v_now - interval '5 minutes',
+    ends_at   = v_now + interval '55 minutes',
+    check_in_window_minutes = 15,
+    updated_at = v_now
+  WHERE id = 'd0000000-0000-0000-0000-000000000002';
+
+  UPDATE classes SET
+    starts_at = v_now - interval '5 minutes',
+    ends_at   = v_now + interval '55 minutes',
+    check_in_window_minutes = 15,
+    updated_at = v_now
+  WHERE id = 'd0000000-0000-0000-0000-000000000003';
+
+  UPDATE classes SET
+    starts_at = v_now - interval '90 minutes',
+    ends_at   = v_now - interval '30 minutes',
+    check_in_window_minutes = 15,
+    updated_at = v_now
+  WHERE id = 'd0000000-0000-0000-0000-000000000004';
+
+  UPDATE classes SET
+    starts_at = v_now - interval '180 minutes',
+    ends_at   = v_now - interval '120 minutes',
+    check_in_window_minutes = 15,
+    updated_at = v_now
+  WHERE id = 'd0000000-0000-0000-0000-000000000005';
+
+  DELETE FROM booking_events WHERE class_id = ANY(v_qa_class);
+  DELETE FROM class_bookings WHERE class_id = ANY(v_qa_class);
+
+  INSERT INTO class_bookings (class_id, member_id, booking_status, is_active) VALUES
+    ('d0000000-0000-0000-0000-000000000001', v_alex,  'booked', true),
+    ('d0000000-0000-0000-0000-000000000001', v_blake, 'booked', true);
+
+  INSERT INTO class_bookings (class_id, member_id, booking_status, is_active) VALUES
+    ('d0000000-0000-0000-0000-000000000002', v_alex,  'booked', true),
+    ('d0000000-0000-0000-0000-000000000002', v_blake, 'booked', true),
+    ('d0000000-0000-0000-0000-000000000002', v_casey, 'booked', true);
+
+  INSERT INTO class_bookings (
+    class_id, member_id, booking_status, checked_in_at, is_active
+  ) VALUES
+    ('d0000000-0000-0000-0000-000000000003', v_alex,  'checked_in', v_now, true),
+    ('d0000000-0000-0000-0000-000000000003', v_blake, 'booked', NULL, true);
+
+  INSERT INTO booking_events (
+    class_id, member_id, booking_id, event_type, event_label, metadata
+  )
+  SELECT
+    cb.class_id, cb.member_id, cb.id,
+    'checked_in',
+    'Checked in (qa_fixture)',
+    jsonb_build_object('source', 'qa_fixture')
+  FROM class_bookings cb
+  WHERE cb.class_id = 'd0000000-0000-0000-0000-000000000003'
+    AND cb.booking_status = 'checked_in';
+
+  INSERT INTO class_bookings (
+    class_id, member_id, booking_status, checked_in_at, is_active
+  ) VALUES
+    ('d0000000-0000-0000-0000-000000000004', v_alex,
+     'checked_in', v_now - interval '75 minutes', true),
+    ('d0000000-0000-0000-0000-000000000004', v_blake,
+     'no_show', NULL, true);
+
+  INSERT INTO class_bookings (
+    class_id, member_id, booking_status, checked_in_at, is_active
+  ) VALUES
+    ('d0000000-0000-0000-0000-000000000005', v_alex,
+     'checked_in', v_now - interval '165 minutes', true),
+    ('d0000000-0000-0000-0000-000000000005', v_blake,
+     'no_show', NULL, true),
+    ('d0000000-0000-0000-0000-000000000005', v_casey,
+     'checked_in', v_now - interval '165 minutes', true);
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'refreshed_at', v_now,
+    'fixtures', jsonb_build_array(
+      'qa-too-early', 'qa-open', 'qa-already-in', 'qa-closed', 'qa-correction'
+    )
   );
 END;
 $$;

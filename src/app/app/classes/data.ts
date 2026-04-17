@@ -72,6 +72,8 @@ export type StudioClass = {
 
 // Seed data removed in v0.4.8 — Supabase is now the source of truth.
 // Keeping a static reference for generateStaticParams fallback.
+// v0.8.4.1 adds the qa-* fixture slugs so the deterministic QA pages
+// also benefit from static prerendering on first hit.
 export const seedClassSlugs = [
   "reformer-mon-9",
   "spin-mon-1230",
@@ -79,4 +81,9 @@ export const seedClassSlugs = [
   "hiit-tue-1800",
   "barre-wed-10",
   "reformer-thu-9",
+  "qa-too-early",
+  "qa-open",
+  "qa-already-in",
+  "qa-closed",
+  "qa-correction",
 ];
