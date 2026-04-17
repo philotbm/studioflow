@@ -57,8 +57,16 @@ function ListSignalPill({ summary }: { summary: ReconciliationSummary }) {
 function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
   const isFull = cls.booked >= cls.capacity;
   const isUpcoming = cls.lifecycle === "upcoming";
-  const summary = reconcileClass(cls);
-  const pillVisible = shouldShowPill(summary, cls.lifecycle);
+  // v0.8.5.1: never let a bad row break the whole list. reconcileClass
+  // itself is now neutral-safe, but an explicit try/null guard here is
+  // cheap insurance in case a future change regresses.
+  let summary: ReconciliationSummary | null = null;
+  try {
+    summary = reconcileClass(cls);
+  } catch {
+    summary = null;
+  }
+  const pillVisible = summary !== null && shouldShowPill(summary, cls.lifecycle);
   return (
     <li>
       <Link
@@ -91,7 +99,7 @@ function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
           )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {pillVisible && <ListSignalPill summary={summary} />}
+          {pillVisible && summary && <ListSignalPill summary={summary} />}
           <span
             className={`text-xs ${
               isFull ? (muted ? "text-green-400/50" : "text-green-400") : muted ? "text-white/30" : "text-white/50"

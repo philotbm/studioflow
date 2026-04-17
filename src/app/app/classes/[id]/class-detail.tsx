@@ -477,6 +477,18 @@ export default function ClassDetail({ id }: { id: string }) {
     }
   }, [cls?.lifecycle, cls?.id, finaliseClass]);
 
+  // v0.8.5.1: this hook MUST stay above the `if (!cls)` early return
+  // below. Placing it after the early return produces a different
+  // hook-count on the first (no-class) render than on the rehydrated
+  // render, which React detects as a rules-of-hooks violation and
+  // throws on — the symptom is a detail page stuck on "Loading class…"
+  // because the crash unmounts the real content. Compute null-safely
+  // here and consume below.
+  const reconciliation = useMemo(
+    () => (cls ? reconcileClass(cls) : null),
+    [cls],
+  );
+
   if (!cls) {
     if (!hydrated) {
       return (
@@ -527,10 +539,6 @@ export default function ClassDetail({ id }: { id: string }) {
   for (const w of cls.waitlist ?? []) {
     if (w.memberId) existingMemberIds.add(w.memberId);
   }
-
-  // v0.8.5: attendance reconciliation + operator interpretation.
-  // Pure derivation from the class + attendee state — no new fetch.
-  const reconciliation = useMemo(() => reconcileClass(cls), [cls]);
 
   return (
     <main className="mx-auto max-w-2xl">
@@ -592,11 +600,15 @@ export default function ClassDetail({ id }: { id: string }) {
       {/* v0.8.5 reconciliation panel — one-glance attendance truth
           + plain-English interpretation. Completed classes get the
           reconciled "what happened" view; live + upcoming get the
-          equivalent current-state view. */}
-      <ReconciliationPanel
-        summary={reconciliation}
-        lifecycle={cls.lifecycle}
-      />
+          equivalent current-state view. v0.8.5.1 guards the render on
+          a non-null reconciliation so an unexpected derivation failure
+          never cascades into a whole-page crash. */}
+      {reconciliation && (
+        <ReconciliationPanel
+          summary={reconciliation}
+          lifecycle={cls.lifecycle}
+        />
+      )}
 
       <div className="mt-8">
         <h2 className="text-sm font-medium text-white/70">Attendees</h2>
