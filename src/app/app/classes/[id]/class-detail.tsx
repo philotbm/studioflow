@@ -9,6 +9,11 @@ import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
 import QaFixtureBanner from "@/app/qa/QaFixtureBanner";
 import { reconcileClass } from "../reconciliation";
 import ReconciliationPanel from "../ReconciliationPanel";
+import {
+  decideEligibility,
+  consumedLabel,
+  consumptionLabel,
+} from "@/lib/eligibility";
 
 // ── Canonical attendance status language (v0.8.4) ───────────────────────
 // These labels are the ONLY visible attendance language in the operator
@@ -80,6 +85,11 @@ function AddMemberControl({
     if (!selectedSlug || busy) return;
     setBusy(true);
     setFeedback(null);
+    // v0.9.0: capture the pre-booking entitlement decision so we can
+    // report "1 credit used" / "unlimited" / "drop-in" on success.
+    const preBookingDecision = selectedMember
+      ? decideEligibility(selectedMember)
+      : null;
     try {
       const result = await bookMember(classId, selectedSlug);
       if (result.status === "blocked") {
@@ -91,10 +101,13 @@ function AddMemberControl({
       } else if (result.alreadyExists) {
         setFeedback({ kind: "ok", text: "Already in this class" });
       } else {
-        setFeedback({
-          kind: "ok",
-          text: result.status === "booked" ? "Booked" : "Added to waitlist",
-        });
+        const base =
+          result.status === "booked" ? "Booked" : "Added to waitlist";
+        const consumption =
+          result.status === "booked" && preBookingDecision
+            ? ` · ${consumedLabel(preBookingDecision)}`
+            : "";
+        setFeedback({ kind: "ok", text: `${base}${consumption}` });
       }
       if (result.status !== "blocked") setSelectedSlug("");
     } catch (e) {
@@ -155,14 +168,19 @@ function AddMemberControl({
         )}
       </div>
 
-      {selectedAccess && (
+      {selectedAccess && selectedMember && (
         <div
           className={`text-[11px] ${
             selectedAccess.canBook ? "text-white/40" : "text-amber-400/80"
           }`}
         >
           {selectedAccess.canBook ? (
-            <>Entitlement: {selectedAccess.entitlementLabel}</>
+            <>
+              Entitlement: {selectedAccess.entitlementLabel}
+              <span className="ml-1 text-white/30">
+                · {consumptionLabel(decideEligibility(selectedMember))}
+              </span>
+            </>
           ) : (
             <>
               Cannot book — {selectedAccess.reason}.{" "}

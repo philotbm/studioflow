@@ -11,6 +11,7 @@ import type {
   PurchaseEntry,
   CreditPackPurchase,
 } from "../data";
+import { decideEligibility, consumptionLabel } from "@/lib/eligibility";
 
 // --- Helpers ---
 
@@ -557,6 +558,9 @@ export default function MemberDetail({ id }: { id: string }) {
 
   const account = accountLine(member);
   const access = member.bookingAccess; // v0.8.0: server-derived truth
+  // v0.9.0: canonical eligibility decision — adds the consumption
+  // expectation (0 or 1 credit) that the server payload doesn't carry.
+  const eligibilityDecision = decideEligibility(member);
   const ins = member.insights;
   const pi = member.purchaseInsights;
   const reasons = reliabilityReasons(ins);
@@ -631,6 +635,13 @@ export default function MemberDetail({ id }: { id: string }) {
               {access.creditsRemaining}
             </span>
           )}
+          {/* v0.9.0 consumption preview — tells the operator at a glance
+              whether a booking for this member will burn a credit. Derived
+              from the canonical src/lib/eligibility.ts module. */}
+          <span>
+            <span className="text-white/30">Next booking:</span>{" "}
+            {consumptionLabel(eligibilityDecision)}
+          </span>
         </div>
         <p className="mt-2 text-xs text-white/40">{access.actionHint}</p>
         {/*

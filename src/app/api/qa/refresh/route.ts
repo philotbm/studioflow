@@ -21,7 +21,11 @@ import { getSupabaseClient } from "@/lib/supabase";
  * to the qa-* slugs declared here.
  */
 
-const QA_MEMBER_SLUGS = ["qa-alex", "qa-blake", "qa-casey"] as const;
+// v0.9.0: qa-drained is active class_pack with 0 credits remaining so
+// live QA has a pure "no_credits" eligibility case. It never joins any
+// fixture class roster — its purpose is to appear in the Add-member
+// dropdown on the operator view and demonstrate a blocked booking.
+const QA_MEMBER_SLUGS = ["qa-alex", "qa-blake", "qa-casey", "qa-drained"] as const;
 type QaMemberSlug = (typeof QA_MEMBER_SLUGS)[number];
 
 const QA_CLASS_SLUGS = [
@@ -66,16 +70,51 @@ async function handle() {
 
   const now = new Date();
 
-  // ── 1. Upsert QA members (unlimited plan so eligibility never interferes) ──
-  const qaMembers = QA_MEMBER_SLUGS.map((slug) => ({
-    slug,
-    full_name:
-      slug === "qa-alex" ? "QA Alex" : slug === "qa-blake" ? "QA Blake" : "QA Casey",
-    status: "active" as const,
-    plan_type: "unlimited" as const,
-    plan_name: "QA Unlimited",
-    credits_remaining: null,
-  }));
+  // ── 1. Upsert QA members ────────────────────────────────────────────
+  // Alex / Blake / Casey stay on unlimited so check-in / attendance
+  // scenarios are never gated by eligibility. Drained is a dedicated
+  // class_pack-zero-credits member for the v0.9.0 no_credits QA path.
+  const qaMembers: Array<{
+    slug: QaMemberSlug;
+    full_name: string;
+    status: "active";
+    plan_type: "unlimited" | "class_pack";
+    plan_name: string;
+    credits_remaining: number | null;
+  }> = [
+    {
+      slug: "qa-alex",
+      full_name: "QA Alex",
+      status: "active",
+      plan_type: "unlimited",
+      plan_name: "QA Unlimited",
+      credits_remaining: null,
+    },
+    {
+      slug: "qa-blake",
+      full_name: "QA Blake",
+      status: "active",
+      plan_type: "unlimited",
+      plan_name: "QA Unlimited",
+      credits_remaining: null,
+    },
+    {
+      slug: "qa-casey",
+      full_name: "QA Casey",
+      status: "active",
+      plan_type: "unlimited",
+      plan_name: "QA Unlimited",
+      credits_remaining: null,
+    },
+    {
+      slug: "qa-drained",
+      full_name: "QA Drained",
+      status: "active",
+      plan_type: "class_pack",
+      plan_name: "QA 5-Class Pass",
+      credits_remaining: 0,
+    },
+  ];
   {
     const { error } = await client
       .from("members")
