@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore, formatRelative } from "@/lib/store";
 import type { Attendee, WaitlistEntry, Lifecycle } from "../data";
 import { qaFixtureFor, type AuditEvent } from "@/lib/db";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
 import QaFixtureBanner from "@/app/qa/QaFixtureBanner";
+import { reconcileClass } from "../reconciliation";
+import ReconciliationPanel from "../ReconciliationPanel";
 
 // ── Canonical attendance status language (v0.8.4) ───────────────────────
 // These labels are the ONLY visible attendance language in the operator
@@ -526,6 +528,10 @@ export default function ClassDetail({ id }: { id: string }) {
     if (w.memberId) existingMemberIds.add(w.memberId);
   }
 
+  // v0.8.5: attendance reconciliation + operator interpretation.
+  // Pure derivation from the class + attendee state — no new fetch.
+  const reconciliation = useMemo(() => reconcileClass(cls), [cls]);
+
   return (
     <main className="mx-auto max-w-2xl">
       <Link
@@ -582,6 +588,15 @@ export default function ClassDetail({ id }: { id: string }) {
           </Link>
         </div>
       </div>
+
+      {/* v0.8.5 reconciliation panel — one-glance attendance truth
+          + plain-English interpretation. Completed classes get the
+          reconciled "what happened" view; live + upcoming get the
+          equivalent current-state view. */}
+      <ReconciliationPanel
+        summary={reconciliation}
+        lifecycle={cls.lifecycle}
+      />
 
       <div className="mt-8">
         <h2 className="text-sm font-medium text-white/70">Attendees</h2>
