@@ -572,51 +572,59 @@ export async function checkInMember(
   memberSlug: string,
   source: CheckInSource,
 ): Promise<CheckInResult> {
-  // v0.8.4: the server can legitimately reply with a structured
-  // rejection (too early, class closed, not booked) — these are NOT
-  // thrown as errors because they are normal domain outcomes the UI
-  // renders verbatim. Only genuine RPC-transport errors throw.
-  const { data, error } = await requireClient().rpc("sf_check_in", {
-    p_class_slug: classSlug,
-    p_member_slug: memberSlug,
-    p_source: source,
-  });
-  if (error) {
-    console.error("[sf_check_in] RPC failed:", error.message);
-    throw new Error(`sf_check_in failed: ${error.message}`);
-  }
-  const result = (data ?? {}) as {
+  // v0.8.4.3: call the server-side TypeScript implementation at
+  // /api/attendance/check-in instead of the sf_check_in RPC. The
+  // route enforces the v0.8.4 window and idempotency semantics
+  // even when the v0.8.4 DB migration has not been applied — it
+  // is the canonical backend from the browser's perspective.
+  //
+  // Gated rejections (too_early / closed / not_booked) come back as
+  // HTTP 200 with { ok:false, code, message, opensAt? } — those are
+  // normal domain outcomes and must NOT be thrown. Non-domain failures
+  // (lookup errors, missing member/class, invalid source, transport
+  // errors) throw so they surface on the error-boundary path.
+  let body: {
     ok?: boolean;
     source?: string;
-    already_checked_in?: boolean;
+    alreadyCheckedIn?: boolean;
     noop?: boolean;
-    error?: string;
-    status_code?: string;
-    opens_at?: string;
+    code?: string;
+    message?: string;
+    opensAt?: string;
   };
+  try {
+    const res = await fetch("/api/attendance/check-in", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ classSlug, memberSlug, source }),
+    });
+    body = await res.json();
+  } catch (e) {
+    throw new Error(
+      e instanceof Error
+        ? `check-in request failed: ${e.message}`
+        : "check-in request failed",
+    );
+  }
 
-  if (result.ok) {
+  if (body.ok) {
     return {
       ok: true,
-      source: (result.source as CheckInSource) ?? source,
-      alreadyCheckedIn: Boolean(result.already_checked_in),
+      source: (body.source as CheckInSource) ?? source,
+      alreadyCheckedIn: Boolean(body.alreadyCheckedIn),
     };
   }
 
-  if (result.error && isRejectionCode(result.status_code)) {
+  if (isRejectionCode(body.code)) {
     return {
       ok: false,
-      code: result.status_code,
-      message: result.error,
-      opensAt: result.opens_at,
+      code: body.code,
+      message: body.message ?? "Check-in blocked",
+      opensAt: body.opensAt,
     };
   }
 
-  // Anything else (invalid source, member not found, class not found,
-  // unstructured error) is a hard error — throw so it surfaces in the
-  // error-boundary-style UI path, not the gated-state UI.
-  if (result.error) throw new Error(result.error);
-  throw new Error("sf_check_in: unexpected response");
+  throw new Error(body.message ?? "check-in failed");
 }
 
 /**
