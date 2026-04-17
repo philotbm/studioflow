@@ -81,6 +81,7 @@ function ClassCard({
   cls,
   muted,
   summary: summaryOverride,
+  lifecycle,
 }: {
   cls: StudioClass;
   muted?: boolean;
@@ -88,12 +89,25 @@ function ClassCard({
    *  so we don't re-derive per card. Falls back to a local derivation
    *  for callers that don't pass one. */
   summary?: ReconciliationSummary | null;
+  /** v0.8.6.1: when present, renders a small "Live / Upcoming / Completed"
+   *  context label before the class title. Only passed from the
+   *  Needs-attention branch — the default sectioned "Show all" view
+   *  leaves this undefined so the label does not appear there. */
+  lifecycle?: "live" | "upcoming" | "completed";
 }) {
   const isFull = cls.booked >= cls.capacity;
   const isUpcoming = cls.lifecycle === "upcoming";
   const summary =
     summaryOverride !== undefined ? summaryOverride : summarise(cls);
   const pillVisible = summary !== null && shouldShowPill(summary, cls.lifecycle);
+  const lifecycleLabel =
+    lifecycle === "live"
+      ? "Live"
+      : lifecycle === "upcoming"
+        ? "Upcoming"
+        : lifecycle === "completed"
+          ? "Completed"
+          : null;
   return (
     <li>
       <Link
@@ -106,6 +120,11 @@ function ClassCard({
       >
         <div className="flex flex-col gap-0.5">
           <span className={`text-sm font-medium ${muted ? "text-white/50" : ""}`}>
+            {lifecycleLabel && (
+              <span className="mr-2 text-xs font-normal text-white/40">
+                {lifecycleLabel}
+              </span>
+            )}
             {cls.name}
           </span>
           <span className={`text-xs ${muted ? "text-white/30" : "text-white/50"}`}>
@@ -307,6 +326,11 @@ function renderNeedsAttention(
             cls={cls}
             summary={summary}
             muted={cls.lifecycle === "completed"}
+            // v0.8.6.1: only in the Needs-attention branch we surface a
+            // context label ahead of the class name, because the flat
+            // sorted list drops the Live / Upcoming / Completed section
+            // headings the default view provides.
+            lifecycle={cls.lifecycle}
           />
         ))}
       </ul>
