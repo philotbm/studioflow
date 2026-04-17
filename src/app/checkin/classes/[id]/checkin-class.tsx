@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useStore } from "@/lib/store";
+import { qaFixtureFor } from "@/lib/db";
 import type { Attendee } from "@/app/app/classes/data";
 import QaFixtureBanner from "@/app/qa/QaFixtureBanner";
 
@@ -47,8 +48,9 @@ function formatClockTime(iso: string): string {
 }
 
 export default function CheckInClass({ id }: { id: string }) {
-  const { getClass, checkInMember, loading, error: storeError } = useStore();
+  const { getClass, checkInMember, hydrated, error: storeError } = useStore();
   const cls = getClass(id);
+  const isQaFixture = qaFixtureFor(id) !== null;
 
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -58,7 +60,7 @@ export default function CheckInClass({ id }: { id: string }) {
     | { kind: "error"; message: string };
   const [result, setResult] = useState<Result | null>(null);
 
-  if (loading && !cls) {
+  if (!hydrated) {
     return (
       <main className="mx-auto max-w-md">
         <QaFixtureBanner classSlug={id} />
@@ -80,10 +82,17 @@ export default function CheckInClass({ id }: { id: string }) {
   }
 
   if (!cls) {
+    // v0.8.4.2: distinguish "QA fixture not seeded" from a genuine
+    // "no such class" so testers don't chase ghosts when the /qa
+    // refresh hasn't run yet. Non-QA slugs keep the original message.
     return (
       <main className="mx-auto max-w-md">
-        <QaFixtureBanner classSlug={id} />
-        <p className="pt-12 text-center text-sm text-white/60">Class not found.</p>
+        <QaFixtureBanner classSlug={id} missing={isQaFixture} />
+        {!isQaFixture && (
+          <p className="pt-12 text-center text-sm text-white/60">
+            Class not found.
+          </p>
+        )}
       </main>
     );
   }

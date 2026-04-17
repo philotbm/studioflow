@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { useStore } from "@/lib/store";
+import { qaFixtureFor } from "@/lib/db";
 import type { Attendee } from "@/app/app/classes/data";
 import type { AttendanceOutcome, CheckInSource } from "@/lib/db";
 import QaFixtureBanner from "@/app/qa/QaFixtureBanner";
@@ -262,9 +263,10 @@ function CheckInQrPanel({ classSlug }: { classSlug: string }) {
 
 // ── Page component ──────────────────────────────────────────────────────
 export default function InstructorClass({ id }: { id: string }) {
-  const { getClass, markAttendance, checkInMember, finaliseClass, loading } =
+  const { getClass, markAttendance, checkInMember, finaliseClass, hydrated } =
     useStore();
   const cls = getClass(id);
+  const isQaFixture = qaFixtureFor(id) !== null;
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -281,7 +283,7 @@ export default function InstructorClass({ id }: { id: string }) {
     }
   }, [cls?.lifecycle, cls?.id, finaliseClass]);
 
-  if (loading && !cls) {
+  if (!hydrated) {
     return (
       <main className="mx-auto max-w-2xl">
         <QaFixtureBanner classSlug={id} />
@@ -293,13 +295,15 @@ export default function InstructorClass({ id }: { id: string }) {
   if (!cls) {
     return (
       <main className="mx-auto max-w-2xl">
-        <QaFixtureBanner classSlug={id} />
-        <p className="pt-12 text-center text-white/40">Class not found.</p>
+        <QaFixtureBanner classSlug={id} missing={isQaFixture} />
+        {!isQaFixture && (
+          <p className="pt-12 text-center text-white/40">Class not found.</p>
+        )}
         <Link
-          href="/instructor"
+          href={isQaFixture ? "/qa" : "/instructor"}
           className="mt-4 inline-block text-center text-xs text-white/40 hover:text-white/70"
         >
-          &larr; Back
+          &larr; {isQaFixture ? "Back to QA matrix" : "Back"}
         </Link>
       </main>
     );
