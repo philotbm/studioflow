@@ -84,7 +84,16 @@ async function handle() {
   }
 
   // ── 2. Upsert QA classes with timestamps relative to now() ─────────────
-  const qaClasses: Array<{
+  //
+  // Note: check_in_window_minutes is deliberately omitted from the
+  // upsert payload. The column exists only after the v0.8.4 migration
+  // has been applied in the Supabase SQL Editor. When it is present it
+  // defaults to 15 (the app's client-side fallback also assumes 15), so
+  // omitting it keeps the refresh working on both pre- and post-v0.8.4
+  // schemas. Testers who need actual DB-enforced window gating should
+  // apply the v0.8.4 migration; the /qa matrix itself does not require
+  // it.
+  type QaClassRow = {
     slug: QaClassSlug;
     title: string;
     instructor_name: string;
@@ -93,8 +102,8 @@ async function handle() {
     capacity: number;
     location_name: string;
     cancellation_window_hours: number;
-    check_in_window_minutes: number;
-  }> = [
+  };
+  const qaClasses: QaClassRow[] = [
     {
       slug: "qa-too-early",
       title: "QA — Too Early",
@@ -104,7 +113,6 @@ async function handle() {
       capacity: 10,
       location_name: "QA Studio",
       cancellation_window_hours: 24,
-      check_in_window_minutes: 15,
     },
     {
       slug: "qa-open",
@@ -115,7 +123,6 @@ async function handle() {
       capacity: 10,
       location_name: "QA Studio",
       cancellation_window_hours: 24,
-      check_in_window_minutes: 15,
     },
     {
       slug: "qa-already-in",
@@ -126,7 +133,6 @@ async function handle() {
       capacity: 10,
       location_name: "QA Studio",
       cancellation_window_hours: 24,
-      check_in_window_minutes: 15,
     },
     {
       slug: "qa-closed",
@@ -137,7 +143,6 @@ async function handle() {
       capacity: 10,
       location_name: "QA Studio",
       cancellation_window_hours: 24,
-      check_in_window_minutes: 15,
     },
     {
       slug: "qa-correction",
@@ -148,7 +153,6 @@ async function handle() {
       capacity: 10,
       location_name: "QA Studio",
       cancellation_window_hours: 24,
-      check_in_window_minutes: 15,
     },
   ];
   {
