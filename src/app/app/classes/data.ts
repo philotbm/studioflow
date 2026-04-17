@@ -32,6 +32,20 @@ export type Attendee = {
 
 export type Lifecycle = "upcoming" | "live" | "completed";
 
+/**
+ * v0.8.4 — check-in window truth. Derived from classes.check_in_window_minutes
+ * alongside lifecycle, so every UI surface shows the same gating. Lifecycle
+ * stays temporal (where is the class relative to now), checkInStatus is
+ * about whether the check-in door is open.
+ *
+ *   pre_window — now < starts_at - check_in_window_minutes. Too early.
+ *                Client sees "Check-in opens at HH:MM".
+ *   open       — we are inside the window. Client can self-check-in.
+ *   closed     — class is completed. Fresh client check-in is blocked;
+ *                staff correction is the only path from here.
+ */
+export type CheckInStatus = "pre_window" | "open" | "closed";
+
 export type WaitlistEntry = {
   name: string;
   memberId?: string;
@@ -48,6 +62,10 @@ export type StudioClass = {
   waitlistCount: number;
   lifecycle: Lifecycle;
   cancellationWindowClosed?: boolean;
+  // v0.8.4
+  checkInStatus: CheckInStatus;
+  checkInWindowMinutes: number;
+  checkInOpensAt: string; // ISO timestamp (starts_at - window)
   attendees: Attendee[];
   waitlist?: WaitlistEntry[];
 };

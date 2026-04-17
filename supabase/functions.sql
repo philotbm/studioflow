@@ -1,10 +1,10 @@
--- StudioFlow v0.8.3 — Economic Engine + Check-In Truth (canonical)
+-- StudioFlow v0.8.4 — Economic Engine + Check-In Truth (canonical)
 --
 -- This file is the CURRENT STATE of all StudioFlow PL/pgSQL — run it in
 -- the Supabase SQL Editor after schema.sql when setting up a fresh
 -- project. For incremental deploys the per-version migrations live at
--- supabase/v0.8.0_migration.sql, supabase/v0.8.2_migration.sql, and
--- supabase/v0.8.3_migration.sql.
+-- supabase/v0.8.0_migration.sql, supabase/v0.8.2_migration.sql,
+-- supabase/v0.8.3_migration.sql, and supabase/v0.8.4_migration.sql.
 -- Every function is CREATE OR REPLACE and the credit_transactions
 -- table / v_members_with_access view are idempotent so re-runs are safe.
 --
@@ -20,12 +20,23 @@
 -- v0.8.2 added:
 --   - sf_mark_attendance (first-pass attendance transitions)
 --
--- v0.8.3 replaces the attendance model with check-in as truth:
+-- v0.8.3 replaced the attendance model with check-in as truth:
 --   - class_bookings.booking_status now allows 'checked_in'
 --   - sf_check_in — positive attendance truth input (client/QR/operator)
 --   - sf_finalise_class — idempotent close sweep booked → no_show
 --   - sf_mark_attendance — correction path (checked_in ↔ no_show),
 --     'booked' revert live-only, 'attended' outcome removed
+--
+-- v0.8.4 hardened check-in for live operational use:
+--   - classes.check_in_window_minutes (default 15) defines the allowed
+--     window: (starts_at - window) ... ends_at.
+--   - sf_check_in gates on that window (too_early + closed status codes)
+--     and is now idempotent on duplicate calls — repeat scans return
+--     { ok: true, already_checked_in: true, noop: true } and write NO
+--     additional audit row or state change.
+--   - class_bookings.booking_status constraint drops legacy 'attended'.
+--     All rows were normalised in v0.8.3; v0.8.4 locks the vocabulary
+--     so the app speaks one attendance language end to end.
 
 -- ═══ WAITLIST PERFORMANCE INDEX ═════════════════════════════════════════
 CREATE INDEX IF NOT EXISTS idx_waitlist_position
@@ -788,33 +799,36 @@ BEGIN
 END;
 $$;
 
--- ═══ 3. sf_check_in ════════════════════════════════════════════════════
+-- ═══ 3. sf_check_in (v0.8.4) ═══════════════════════════════════════════
 -- Positive attendance truth input. One of the three input channels
 -- (client app page, QR-scanned URL, instructor fallback) calls this.
 -- Source is recorded in booking_events metadata for audit.
 --
--- Rules:
---   - Class must be LIVE (starts_at <= now() <= ends_at). Upcoming and
---     completed classes are rejected.
---   - Active booking must exist and currently be 'booked'.
---     Waitlisted, cancelled, late_cancel, and "not booked at all"
---     cases all resolve to the same "No eligible booking" error.
---   - Already-checked-in rows are rejected with a clear duplicate error
---     — the front-end hides the Check in button in that case, but the
---     DB is the backstop.
---   - Source must be one of 'client', 'operator' (v0.8.3). A future
---     release can extend this set.
+-- Rules (v0.8.4):
+--   - Check-in window is (starts_at - check_in_window_minutes) ... ends_at.
+--     Default window is 15 min. Pre-window returns status_code='too_early'
+--     with opens_at. Post-window returns status_code='closed'.
+--   - Active booking must exist and currently be 'booked' or 'checked_in'.
+--     Waitlisted, cancelled, late_cancel, and "not booked at all" all
+--     resolve to the same status_code='not_booked' error.
+--   - Idempotent: repeat calls for an already-checked-in booking return
+--     { ok:true, already_checked_in:true, noop:true } and write NO
+--     additional audit row, so repeat QR scans cannot flood the ledger.
+--   - Source must be one of 'client', 'operator'. Future releases can
+--     extend this set.
 --
--- Return: { ok: true } or { error: "..." }.
+-- Return: success with { ok:true, source } or { ok:true, already_checked_in:true, noop:true },
+-- or { error:"...", status_code } on a gated rejection.
 CREATE OR REPLACE FUNCTION sf_check_in(
   p_class_slug  text,
   p_member_slug text,
   p_source      text
 ) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
-  v_class   RECORD;
-  v_member  RECORD;
-  v_booking RECORD;
+  v_class    RECORD;
+  v_member   RECORD;
+  v_booking  RECORD;
+  v_opens_at timestamptz;
 BEGIN
   IF p_source IS NULL OR p_source NOT IN ('client', 'operator') THEN
     RETURN jsonb_build_object(
@@ -827,7 +841,7 @@ BEGIN
     RETURN jsonb_build_object('error', 'Member not found: ' || p_member_slug);
   END IF;
 
-  SELECT id, starts_at, ends_at
+  SELECT id, starts_at, ends_at, check_in_window_minutes
   INTO v_class
   FROM classes
   WHERE slug = p_class_slug
@@ -837,17 +851,23 @@ BEGIN
     RETURN jsonb_build_object('error', 'Class not found: ' || p_class_slug);
   END IF;
 
-  -- Lifecycle gate: live only
-  IF v_class.ends_at < now() THEN
-    RETURN jsonb_build_object('error', 'Class is completed — check-in closed');
-  END IF;
-  IF v_class.starts_at > now() THEN
-    RETURN jsonb_build_object('error', 'Class has not started — check-in is not open yet');
+  v_opens_at := v_class.starts_at - make_interval(mins => v_class.check_in_window_minutes);
+
+  IF now() < v_opens_at THEN
+    RETURN jsonb_build_object(
+      'error', 'Check-in is not open yet',
+      'status_code', 'too_early',
+      'opens_at', v_opens_at
+    );
   END IF;
 
-  -- Find eligible booking. Must be active AND currently booked or
-  -- checked_in (already-checked-in is rejected separately below so we
-  -- return the precise error).
+  IF v_class.ends_at < now() THEN
+    RETURN jsonb_build_object(
+      'error', 'Class has ended — check-in is closed',
+      'status_code', 'closed'
+    );
+  END IF;
+
   SELECT id, booking_status INTO v_booking
   FROM class_bookings
   WHERE class_id = v_class.id
@@ -856,15 +876,21 @@ BEGIN
     AND booking_status IN ('booked', 'checked_in');
 
   IF v_booking IS NULL THEN
-    -- This catches waitlisted, cancelled, late_cancel, and "no booking" all
-    -- with the same operator-safe message.
     RETURN jsonb_build_object(
-      'error', 'No eligible booking — member is not booked into this class'
+      'error', 'No eligible booking — member is not booked into this class',
+      'status_code', 'not_booked'
     );
   END IF;
 
+  -- v0.8.4 idempotency: repeat check-in is a clean no-op. No state flip,
+  -- no duplicate booking_events row.
   IF v_booking.booking_status = 'checked_in' THEN
-    RETURN jsonb_build_object('error', 'Already checked in');
+    RETURN jsonb_build_object(
+      'ok', true,
+      'source', p_source,
+      'already_checked_in', true,
+      'noop', true
+    );
   END IF;
 
   UPDATE class_bookings SET
@@ -1004,7 +1030,7 @@ BEGIN
   IF v_is_done AND p_outcome = 'booked' THEN
     RETURN jsonb_build_object(
       'error',
-      'Class is completed — cannot revert to booked; use checked_in or no_show'
+      'Class is completed — cannot revert to booked. Use Mark as checked in or Mark as no-show.'
     );
   END IF;
 

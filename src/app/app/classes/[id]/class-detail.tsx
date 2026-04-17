@@ -7,11 +7,13 @@ import type { Attendee, WaitlistEntry, Lifecycle } from "../data";
 import type { AuditEvent } from "@/lib/db";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
 
-// ── Canonical attendance status language (v0.8.3) ───────────────────────
+// ── Canonical attendance status language (v0.8.4) ───────────────────────
 // These labels are the ONLY visible attendance language in the operator
 // view. They match the instructor view and client check-in surfaces
-// verbatim so there is no drift. If you need to add a new state, extend
-// every surface together and update src/app/app/classes/data.ts#Attendee.
+// verbatim so there is no drift. Legacy 'attended' is gone — the DB
+// constraint forbids it from v0.8.4 onwards, and this map reflects the
+// new single vocabulary. If you need to add a new state, extend every
+// surface together and update src/app/app/classes/data.ts#Attendee.
 const statusLabel: Record<string, string> = {
   booked: "Booked",
   checked_in: "Checked in",
@@ -394,9 +396,13 @@ function BookingAuditLog({ classSlug }: { classSlug: string }) {
       case "booked":
       case "promoted_manual":
       case "promoted_auto":
-      case "attendance_attended":
+      case "attendance_checked_in":
+      case "checked_in":
+      case "correction_checked_in":
         return "text-green-400/80";
       case "attendance_no_show":
+      case "auto_no_show":
+      case "correction_no_show":
         return "text-red-400/80";
       case "attendance_reverted":
         return "text-white/50";

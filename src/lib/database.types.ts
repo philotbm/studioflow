@@ -70,6 +70,9 @@ export type ClassRow = {
   capacity: number;
   location_name: string | null;
   cancellation_window_hours: number;
+  // v0.8.4: check-in window length in minutes. Check-in opens
+  // (starts_at - check_in_window_minutes) and closes at ends_at.
+  check_in_window_minutes: number;
   created_at: string;
   updated_at: string;
 };
@@ -78,7 +81,9 @@ export type BookingRow = {
   id: string;
   class_id: string;
   member_id: string;
-  booking_status: "booked" | "waitlisted" | "cancelled" | "late_cancel" | "attended" | "no_show";
+  // v0.8.4: 'attended' dropped from the accepted set — all legacy rows
+  // were normalised to 'checked_in' in v0.8.3.
+  booking_status: "booked" | "waitlisted" | "cancelled" | "late_cancel" | "no_show" | "checked_in";
   waitlist_position: number | null;
   booked_at: string | null;
   cancelled_at: string | null;
