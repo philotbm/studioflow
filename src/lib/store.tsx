@@ -242,7 +242,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       source: CheckInSource,
     ): Promise<CheckInResult> => {
       const result = await dbCheckInMember(classSlug, memberSlug, source);
-      await loadData();
+      // v0.8.4: refresh on a successful state-changing check-in. Skip
+      // the refresh on idempotent (already-checked-in) responses and
+      // on gated rejections — nothing on the server changed, so there
+      // is nothing new to pull, and avoiding the refresh means repeat
+      // scans feel instant instead of re-hydrating the whole store.
+      if (result.ok && !result.alreadyCheckedIn) await loadData();
       return result;
     },
     [loadData],

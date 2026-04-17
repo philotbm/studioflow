@@ -5,20 +5,24 @@ import { useStore } from "@/lib/store";
 import type { Attendee } from "@/app/app/classes/data";
 
 /**
- * v0.8.3 client check-in page.
+ * v0.8.4 client check-in page.
  *
  * Reachable by:
  *   - scanning the class QR code (rendered on the instructor view)
  *   - direct URL navigation on a member's phone / browser
  *
- * The same page serves both paths — QR and "app check-in" converge on
- * the same React component and the same sf_check_in RPC. No auth, no
- * role gating; validation happens server-side via sf_check_in, which
- * enforces the full rule set:
- *   - class must be live (upcoming/completed rejected)
- *   - member must be actively booked (waitlist/cancelled/late_cancel/
- *     not-booked all rejected with the same operator-safe message)
- *   - already-checked-in is rejected as a duplicate
+ * The page renders one of five mutually exclusive states:
+ *
+ *   1. too early           — class is in the future, outside the window
+ *                            ("Check-in opens at HH:MM")
+ *   2. check-in open       — inside the window; roster with tappable rows
+ *   3. already checked in  — idempotent success (repeat scan / tap)
+ *   4. class closed        — class ended; staff correction only
+ *   5. not found           — invalid slug
+ *
+ * The DB is the authoritative gate. sf_check_in re-evaluates every
+ * rule server-side and returns structured rejections — this page just
+ * renders the right UI state from them.
  */
 
 type RosterRow = {
@@ -34,17 +38,24 @@ const STATUS_LABEL: Record<Attendee["status"], string> = {
   late_cancel: "Late cancel",
 };
 
+function formatClockTime(iso: string): string {
+  const d = new Date(iso);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
 export default function CheckInClass({ id }: { id: string }) {
   const { getClass, checkInMember, loading, error: storeError } = useStore();
   const cls = getClass(id);
 
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<
-    | { kind: "ok"; name: string }
-    | { kind: "error"; message: string }
-    | null
-  >(null);
+  type Result =
+    | { kind: "ok"; name: string; alreadyCheckedIn: boolean }
+    | { kind: "gated"; code: "too_early" | "closed" | "not_booked"; message: string; opensAt?: string }
+    | { kind: "error"; message: string };
+  const [result, setResult] = useState<Result | null>(null);
 
   if (loading && !cls) {
     return (
@@ -71,8 +82,8 @@ export default function CheckInClass({ id }: { id: string }) {
     );
   }
 
-  // Lifecycle gate: only allow check-in during the live window.
-  if (cls.lifecycle === "upcoming") {
+  // ── State 1: too early (pre-window) ────────────────────────────────
+  if (cls.checkInStatus === "pre_window") {
     return (
       <main className="mx-auto max-w-md">
         <h1 className="text-xl font-semibold">{cls.name}</h1>
@@ -80,15 +91,19 @@ export default function CheckInClass({ id }: { id: string }) {
           {cls.time} · {cls.instructor}
         </p>
         <div className="mt-6 rounded border border-white/10 px-4 py-4 text-sm text-white/70">
-          This class hasn&apos;t started yet.
+          Check-in isn&apos;t open yet.
           <p className="mt-2 text-xs text-white/40">
-            Check-in opens when the class goes live.
+            Opens at {formatClockTime(cls.checkInOpensAt)} —
+            {" "}
+            {cls.checkInWindowMinutes} min before class start.
           </p>
         </div>
       </main>
     );
   }
-  if (cls.lifecycle === "completed") {
+
+  // ── State 4: class closed ──────────────────────────────────────────
+  if (cls.checkInStatus === "closed") {
     return (
       <main className="mx-auto max-w-md">
         <h1 className="text-xl font-semibold">{cls.name}</h1>
@@ -97,14 +112,15 @@ export default function CheckInClass({ id }: { id: string }) {
         </p>
         <div className="mt-6 rounded border border-white/10 px-4 py-4 text-sm text-white/70">
           This class has ended — check-in is closed.
+          <p className="mt-2 text-xs text-white/40">
+            If this looks wrong, ask your instructor to correct it on their end.
+          </p>
         </div>
       </main>
     );
   }
 
-  // Live class: show the booked roster. Exclude late_cancel entirely;
-  // waitlist is already excluded by the store's mapBookingsToAttendees
-  // which filters booking_status='waitlisted' before the mapper runs.
+  // ── State 2: check-in open — show the roster ───────────────────────
   const roster: RosterRow[] = [];
   for (const a of cls.attendees) {
     if (a.status === "late_cancel") continue;
@@ -117,8 +133,21 @@ export default function CheckInClass({ id }: { id: string }) {
     setBusy(true);
     setResult(null);
     try {
-      await checkInMember(cls!.id, row.memberId, "client");
-      setResult({ kind: "ok", name: row.name });
+      const outcome = await checkInMember(cls!.id, row.memberId, "client");
+      if (outcome.ok) {
+        setResult({
+          kind: "ok",
+          name: row.name,
+          alreadyCheckedIn: outcome.alreadyCheckedIn,
+        });
+      } else {
+        setResult({
+          kind: "gated",
+          code: outcome.code,
+          message: outcome.message,
+          opensAt: outcome.opensAt,
+        });
+      }
     } catch (e) {
       setResult({
         kind: "error",
@@ -129,76 +158,117 @@ export default function CheckInClass({ id }: { id: string }) {
     }
   }
 
+  // ── State 3: already-checked-in or ok success ──────────────────────
+  if (result?.kind === "ok") {
+    return (
+      <main className="mx-auto max-w-md">
+        <h1 className="text-xl font-semibold">{cls.name}</h1>
+        <p className="mt-1 text-xs text-white/50">
+          {cls.time} · {cls.instructor}
+        </p>
+        <div className="mt-6 rounded border border-green-400/30 bg-green-400/5 px-4 py-5 text-center">
+          <p className="text-lg font-semibold text-green-300">
+            {result.alreadyCheckedIn
+              ? "✓ You’re already checked in"
+              : "✓ You’re checked in"}
+          </p>
+          <p className="mt-1 text-xs text-white/60">
+            {result.alreadyCheckedIn
+              ? `No changes made, ${result.name}. Enjoy the class.`
+              : `Welcome, ${result.name}. Enjoy the class.`}
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  // Inline feedback banner for gated rejection / error while still
+  // showing the roster so the member can retry or pick a different row.
+  const banner = (() => {
+    if (!result) return null;
+    if (result.kind === "gated") {
+      const label =
+        result.code === "too_early"
+          ? result.opensAt
+            ? `Check-in opens at ${formatClockTime(result.opensAt)}`
+            : "Check-in is not open yet"
+          : result.code === "closed"
+            ? "Class has ended — check-in is closed"
+            : "You’re not booked into this class — ask an instructor";
+      return (
+        <p className="mt-3 rounded border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-xs text-amber-200/90">
+          {label}
+        </p>
+      );
+    }
+    if (result.kind === "error") {
+      return (
+        <p className="mt-3 rounded border border-red-400/30 bg-red-400/5 px-3 py-2 text-xs text-red-400/90">
+          {result.message}
+        </p>
+      );
+    }
+    return null;
+  })();
+
   return (
     <main className="mx-auto max-w-md">
       <h1 className="text-xl font-semibold">{cls.name}</h1>
       <p className="mt-1 flex items-center gap-2 text-xs text-white/50">
         <span className="inline-flex items-center gap-1 rounded-full border border-green-400/30 px-2 py-0.5 text-[11px] text-green-400">
           <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-green-400" />
-          Live
+          Check-in open
         </span>
         <span>
           {cls.time} · {cls.instructor}
         </span>
       </p>
 
-      {result?.kind === "ok" ? (
-        <div className="mt-6 rounded border border-green-400/30 bg-green-400/5 px-4 py-5 text-center">
-          <p className="text-lg font-semibold text-green-300">
-            ✓ You&apos;re checked in
-          </p>
-          <p className="mt-1 text-xs text-white/60">
-            Welcome, {result.name}. Enjoy the class.
-          </p>
-        </div>
-      ) : (
-        <>
-          <p className="mt-4 text-sm text-white/70">
-            Tap your name to check in.
-          </p>
-          {result?.kind === "error" && (
-            <p className="mt-3 rounded border border-red-400/30 bg-red-400/5 px-3 py-2 text-xs text-red-400/90">
-              {result.message}
-            </p>
-          )}
-          <ul className="mt-4 flex flex-col gap-2">
-            {roster.length === 0 && (
-              <li className="rounded border border-white/10 px-4 py-3 text-xs text-white/40">
-                No booked members on this class.
-              </li>
-            )}
-            {roster.map((r) => {
-              const isThisBusy = busy && selectedSlug === r.memberId;
-              const alreadyCheckedIn = r.status === "checked_in";
-              const noShow = r.status === "no_show";
-              return (
-                <li key={r.memberId}>
-                  <button
-                    onClick={() => handleCheckIn(r)}
-                    disabled={busy || alreadyCheckedIn || noShow}
-                    className={`flex w-full items-center justify-between rounded border px-4 py-3 text-left transition-colors ${
-                      alreadyCheckedIn
-                        ? "border-green-400/40 bg-green-400/5 text-green-300"
-                        : noShow
-                          ? "border-red-400/20 text-red-400/70"
-                          : "border-white/15 text-white/90 hover:border-white/40 hover:bg-white/5"
-                    } disabled:cursor-not-allowed`}
-                  >
-                    <span className="text-sm font-medium">{r.name}</span>
-                    <span className="text-xs">
-                      {isThisBusy
-                        ? "…"
-                        : alreadyCheckedIn
-                          ? "✓ Checked in"
-                          : STATUS_LABEL[r.status]}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </>
-      )}
+      <p className="mt-4 text-sm text-white/70">Tap your name to check in.</p>
+      {banner}
+      <ul className="mt-4 flex flex-col gap-2">
+        {roster.length === 0 && (
+          <li className="rounded border border-white/10 px-4 py-3 text-xs text-white/40">
+            No booked members on this class.
+          </li>
+        )}
+        {roster.map((r) => {
+          const isThisBusy = busy && selectedSlug === r.memberId;
+          const alreadyCheckedIn = r.status === "checked_in";
+          const noShow = r.status === "no_show";
+          return (
+            <li key={r.memberId}>
+              <button
+                onClick={() => handleCheckIn(r)}
+                disabled={busy || noShow}
+                className={`flex w-full items-center justify-between rounded border px-4 py-3 text-left transition-colors ${
+                  alreadyCheckedIn
+                    ? "border-green-400/40 bg-green-400/5 text-green-300"
+                    : noShow
+                      ? "border-red-400/20 text-red-400/70"
+                      : "border-white/15 text-white/90 hover:border-white/40 hover:bg-white/5"
+                } disabled:cursor-not-allowed`}
+                title={
+                  noShow
+                    ? "Marked as no-show — ask your instructor to correct"
+                    : alreadyCheckedIn
+                      ? "Already checked in — tap to confirm"
+                      : undefined
+                }
+              >
+                <span className="text-sm font-medium">{r.name}</span>
+                <span className="text-xs">
+                  {isThisBusy
+                    ? "…"
+                    : alreadyCheckedIn
+                      ? "✓ Checked in"
+                      : STATUS_LABEL[r.status]}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </main>
   );
 }

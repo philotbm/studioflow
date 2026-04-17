@@ -8,16 +8,20 @@ import type { Attendee } from "@/app/app/classes/data";
 import type { AttendanceOutcome, CheckInSource } from "@/lib/db";
 
 /**
- * v0.8.3 Instructor View
+ * v0.8.4 Instructor View
  *
  * Check-in is the positive attendance truth. The instructor view has
  * four jobs in this release:
  *
- *   1. Show the class, its lifecycle, and the canonical-language roster.
- *   2. Display the class-specific QR code during a LIVE class so members
- *      can scan it and self-check-in via /checkin/classes/[id].
+ *   1. Show the class, its lifecycle + check-in window, and the
+ *      canonical-language roster.
+ *   2. Display the class-specific QR code while the check-in window is
+ *      OPEN so members can scan it and self-check-in.
  *   3. Provide a manual fallback: the instructor can mark a booked
  *      member as checked in if they cannot self-serve. Source = 'operator'.
+ *      Source='operator' check-in is subject to the same window as
+ *      client check-in — outside the window the button is disabled and
+ *      a tooltip explains why.
  *   4. Provide the post-close correction path on COMPLETED classes:
  *      "Mark as checked in" / "Mark as no-show". These are NOT vague
  *      Undo/Edit actions — they are explicit, auditable transitions
@@ -88,6 +92,10 @@ type AttendeeRowProps = {
   memberId?: string;
   status: InstructorStatus;
   mode: RowMode;
+  // v0.8.4: when mode === 'readonly', the row surfaces this phrase so
+  // the operator understands *why* attendance controls are unavailable
+  // (e.g. "Check-in opens at 17:45"). Ignored in other modes.
+  readonlyReason?: string;
   onCheckIn: (memberId: string) => Promise<void>;
   onMark: (memberId: string, outcome: AttendanceOutcome) => Promise<void>;
   busy: boolean;
@@ -98,6 +106,7 @@ function AttendeeRow({
   memberId,
   status,
   mode,
+  readonlyReason,
   onCheckIn,
   onMark,
   busy,
@@ -131,7 +140,12 @@ function AttendeeRow({
         </span>
       </div>
       {mode === "readonly" ? (
-        <span className="text-xs text-white/40">{STATUS_LABEL[status]}</span>
+        <div className="flex flex-col items-end gap-0.5 text-right">
+          <span className="text-xs text-white/40">{STATUS_LABEL[status]}</span>
+          {readonlyReason && (
+            <span className="text-[11px] text-white/30">{readonlyReason}</span>
+          )}
+        </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -301,12 +315,24 @@ export default function InstructorClass({ id }: { id: string }) {
     attendees.push({ name: a.name, memberId: a.memberId, status: s });
   }
 
+  // v0.8.4: upcoming classes are "readonly" — instructor cannot mark
+  // attendance or check members in until the check-in window opens.
+  // Once the window opens (pre-class lobby) we switch to "live" mode
+  // so the operator can use the manual fallback; the DB still
+  // enforces the window on its own.
   const mode: RowMode =
-    cls.lifecycle === "live"
-      ? "live"
-      : cls.lifecycle === "completed"
-        ? "correction"
+    cls.lifecycle === "completed"
+      ? "correction"
+      : cls.checkInStatus === "open"
+        ? "live"
         : "readonly";
+
+  function formatClockTime(iso: string): string {
+    const d = new Date(iso);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
 
   const checkedInCount = attendees.filter((a) => a.status === "checked_in").length;
   const noShowCount = attendees.filter((a) => a.status === "no_show").length;
@@ -316,9 +342,13 @@ export default function InstructorClass({ id }: { id: string }) {
     setBusySlug(memberSlug);
     setError(null);
     try {
-      // Instructor fallback check-in → source='operator'
+      // Instructor fallback check-in → source='operator'. Same window
+      // gate as client check-in — outside the window the server will
+      // reject with a status_code; we surface the message as an inline
+      // banner so the operator can see why the action did nothing.
       const source: CheckInSource = "operator";
-      await checkInMember(cls!.id, memberSlug, source);
+      const outcome = await checkInMember(cls!.id, memberSlug, source);
+      if (!outcome.ok) setError(outcome.message);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to check in");
     } finally {
@@ -369,25 +399,37 @@ export default function InstructorClass({ id }: { id: string }) {
       </div>
 
       {/* Lifecycle guidance */}
-      {cls.lifecycle === "upcoming" && (
+      {cls.lifecycle === "upcoming" && cls.checkInStatus === "pre_window" && (
         <div className="mt-6 rounded border border-white/10 px-4 py-3 text-xs text-white/50">
-          Class has not started yet — check-in and attendance marking
-          unlock once the class goes live.
+          Check-in opens at {formatClockTime(cls.checkInOpensAt)} —
+          {" "}
+          {cls.checkInWindowMinutes} min before class start.
+          Attendance controls unlock then.
+        </div>
+      )}
+      {cls.checkInStatus === "open" && cls.lifecycle === "upcoming" && (
+        <div className="mt-6 rounded border border-green-400/20 px-4 py-3 text-xs text-green-200/80">
+          Check-in window is open — members can self-check-in via the QR
+          code below, or you can use the manual fallback on each row.
         </div>
       )}
       {cls.lifecycle === "completed" && (
         <div className="mt-6 rounded border border-amber-400/20 px-4 py-3 text-xs text-amber-200/80">
           Class is completed — post-class corrections only. Use the
           explicit <strong>Mark as checked in</strong> / <strong>Mark as no-show</strong> actions
-          to correct a row. Each correction is recorded in the audit trail.
+          to correct a row. Each correction is appended to the audit
+          trail — previous history is preserved.
         </div>
       )}
 
-      {/* QR panel — live classes only */}
-      {cls.lifecycle === "live" && <CheckInQrPanel classSlug={cls.id} />}
+      {/* QR panel — shown whenever the check-in window is OPEN, which
+          covers both the pre-class lobby (upcoming + inside window) and
+          the live class itself. */}
+      {cls.checkInStatus === "open" && <CheckInQrPanel classSlug={cls.id} />}
 
-      {/* Summary counters */}
-      {(cls.lifecycle === "live" || cls.lifecycle === "completed") && (
+      {/* Summary counters — shown once the check-in window is open
+          or the class has finished. Pure upcoming classes stay quiet. */}
+      {(mode === "live" || mode === "correction") && (
         <div className="mt-6 grid grid-cols-3 gap-3 text-center">
           <div className="rounded border border-white/10 px-3 py-2">
             <span className="text-xs text-white/40">Checked in</span>
@@ -412,18 +454,27 @@ export default function InstructorClass({ id }: { id: string }) {
           </p>
         ) : (
           <ul className="mt-3 flex flex-col gap-2">
-            {attendees.map((a, i) => (
-              <AttendeeRow
-                key={a.memberId ?? `row-${i}`}
-                name={a.name}
-                memberId={a.memberId}
-                status={a.status}
-                mode={mode}
-                busy={busySlug === a.memberId}
-                onCheckIn={handleCheckIn}
-                onMark={handleMark}
-              />
-            ))}
+            {attendees.map((a, i) => {
+              const readonlyReason =
+                mode !== "readonly"
+                  ? undefined
+                  : cls.checkInStatus === "pre_window"
+                    ? `Opens ${formatClockTime(cls.checkInOpensAt)}`
+                    : "Attendance controls locked";
+              return (
+                <AttendeeRow
+                  key={a.memberId ?? `row-${i}`}
+                  name={a.name}
+                  memberId={a.memberId}
+                  status={a.status}
+                  mode={mode}
+                  readonlyReason={readonlyReason}
+                  busy={busySlug === a.memberId}
+                  onCheckIn={handleCheckIn}
+                  onMark={handleMark}
+                />
+              );
+            })}
           </ul>
         )}
       </div>

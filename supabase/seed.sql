@@ -151,21 +151,21 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO class_bookings (id, class_id, member_id, booking_status, checked_in_at, cancelled_at, is_active)
 VALUES
 -- emma-kelly: attended
-(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000001-0000-0000-0000-000000000001', 'attended', '2025-04-07 08:55:00+01', NULL, true),
+(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000001-0000-0000-0000-000000000001', 'checked_in', '2025-04-07 08:55:00+01', NULL, true),
 -- ciara-byrne: attended
-(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000001-0000-0000-0000-000000000002', 'attended', '2025-04-07 08:50:00+01', NULL, true),
+(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000001-0000-0000-0000-000000000002', 'checked_in', '2025-04-07 08:50:00+01', NULL, true),
 -- niamh-walsh: attended
-(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000002-0000-0000-0000-000000000001', 'attended', '2025-04-07 08:52:00+01', NULL, true),
+(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000002-0000-0000-0000-000000000001', 'checked_in', '2025-04-07 08:52:00+01', NULL, true),
 -- orla-duffy: attended
-(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000002-0000-0000-0000-000000000002', 'attended', '2025-04-07 08:53:00+01', NULL, true),
+(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000002-0000-0000-0000-000000000002', 'checked_in', '2025-04-07 08:53:00+01', NULL, true),
 -- sinead-murphy: no_show
 (gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000002-0000-0000-0000-000000000003', 'no_show', NULL, NULL, true),
 -- roisin-daly: late_cancel
 (gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000002-0000-0000-0000-000000000004', 'late_cancel', NULL, '2025-04-07 07:00:00+01', false),
 -- aisling-nolan: attended
-(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000002-0000-0000-0000-000000000005', 'attended', '2025-04-07 08:58:00+01', NULL, true),
+(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000002-0000-0000-0000-000000000005', 'checked_in', '2025-04-07 08:58:00+01', NULL, true),
 -- maeve-ryan: attended
-(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000002-0000-0000-0000-000000000006', 'attended', '2025-04-07 08:56:00+01', NULL, true)
+(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000001', 'a0000002-0000-0000-0000-000000000006', 'checked_in', '2025-04-07 08:56:00+01', NULL, true)
 ON CONFLICT DO NOTHING;
 
 
@@ -213,17 +213,17 @@ ON CONFLICT DO NOTHING;
 INSERT INTO class_bookings (id, class_id, member_id, booking_status, checked_in_at, is_active)
 VALUES
 -- saoirse-flynn: attended
-(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000003', 'a0000001-0000-0000-0000-000000000004', 'attended', '2025-04-08 06:55:00+01', true),
+(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000003', 'a0000001-0000-0000-0000-000000000004', 'checked_in', '2025-04-08 06:55:00+01', true),
 -- grainne-doyle: attended
-(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000003', 'a0000002-0000-0000-0000-000000000018', 'attended', '2025-04-08 06:50:00+01', true),
+(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000003', 'a0000002-0000-0000-0000-000000000018', 'checked_in', '2025-04-08 06:50:00+01', true),
 -- eimear-cahill: no_show
 (gen_random_uuid(), 'b0000001-0000-0000-0000-000000000003', 'a0000002-0000-0000-0000-000000000019', 'no_show', NULL, true),
 -- sile-brennan: attended
-(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000003', 'a0000002-0000-0000-0000-000000000020', 'attended', '2025-04-08 06:52:00+01', true),
+(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000003', 'a0000002-0000-0000-0000-000000000020', 'checked_in', '2025-04-08 06:52:00+01', true),
 -- brigid-moran: attended
-(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000003', 'a0000002-0000-0000-0000-000000000021', 'attended', '2025-04-08 06:54:00+01', true),
+(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000003', 'a0000002-0000-0000-0000-000000000021', 'checked_in', '2025-04-08 06:54:00+01', true),
 -- cathal-donnelly: attended
-(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000003', 'a0000002-0000-0000-0000-000000000022', 'attended', '2025-04-08 06:56:00+01', true)
+(gen_random_uuid(), 'b0000001-0000-0000-0000-000000000003', 'a0000002-0000-0000-0000-000000000022', 'checked_in', '2025-04-08 06:56:00+01', true)
 ON CONFLICT DO NOTHING;
 
 

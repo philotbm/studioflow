@@ -34,6 +34,11 @@ create table if not exists classes (
   capacity                  integer not null,
   location_name             text,
   cancellation_window_hours integer not null default 12,
+  -- v0.8.4: check-in opens `check_in_window_minutes` before starts_at
+  -- and closes at ends_at. Default 15 min. Guarded by sf_check_in.
+  check_in_window_minutes   integer not null default 15
+                              check (check_in_window_minutes >= 0
+                                     and check_in_window_minutes <= 240),
   created_at                timestamptz not null default now(),
   updated_at                timestamptz not null default now()
 );
@@ -43,10 +48,12 @@ create table if not exists class_bookings (
   id                uuid primary key default gen_random_uuid(),
   class_id          uuid not null references classes(id) on delete cascade,
   member_id         uuid not null references members(id) on delete cascade,
+  -- v0.8.4: legacy 'attended' dropped from the accepted set. v0.8.3
+  -- normalised all existing rows to 'checked_in'; v0.8.4 locks it in.
   booking_status    text not null default 'booked'
                       check (booking_status in (
                         'booked','waitlisted','cancelled',
-                        'late_cancel','attended','no_show','checked_in'
+                        'late_cancel','no_show','checked_in'
                       )),
   waitlist_position integer,
   booked_at         timestamptz default now(),

@@ -7,7 +7,13 @@ import type {
   CreditTransactionRow,
   AccessJson,
 } from "./database.types";
-import type { StudioClass, Attendee, WaitlistEntry, Lifecycle } from "@/app/app/classes/data";
+import type {
+  StudioClass,
+  Attendee,
+  WaitlistEntry,
+  Lifecycle,
+  CheckInStatus,
+} from "@/app/app/classes/data";
 import type {
   Member,
   MemberInsights,
@@ -36,6 +42,25 @@ function deriveLifecycle(startsAt: string, endsAt: string): Lifecycle {
   if (end < now) return "completed";
   if (start <= now && end >= now) return "live";
   return "upcoming";
+}
+
+// v0.8.4 check-in window derivation. Client-side so every UI surface
+// speaks the same truth without a network round-trip. The DB is still
+// the authoritative backstop — sf_check_in re-evaluates on the same
+// rule using its own now() and the persisted window_minutes.
+function deriveCheckInStatus(
+  startsAt: string,
+  endsAt: string,
+  windowMinutes: number,
+): { status: CheckInStatus; opensAt: string } {
+  const now = Date.now();
+  const start = new Date(startsAt).getTime();
+  const end = new Date(endsAt).getTime();
+  const opens = start - windowMinutes * 60_000;
+  const opensAt = new Date(opens).toISOString();
+  if (end < now) return { status: "closed", opensAt };
+  if (now < opens) return { status: "pre_window", opensAt };
+  return { status: "open", opensAt };
 }
 
 function deriveCancellationWindowClosed(
@@ -108,17 +133,16 @@ function mapBookingsToAttendees(
   bookings: BookingJoined[],
   promotionMeta: Map<string, number>,
 ): Attendee[] {
-  // v0.8.3: canonical statuses are booked / checked_in / late_cancel /
-  // no_show. Legacy 'attended' rows were normalised by the v0.8.3 SQL
-  // migration, but we still map any stray 'attended' read from older
-  // caches / transitional rows to 'checked_in' so the client never
-  // shows two attendance languages at once.
+  // v0.8.4: canonical statuses are booked / checked_in / late_cancel /
+  // no_show. The DB constraint now forbids legacy 'attended'; we still
+  // defensively coerce any stale read just in case a caller hits this
+  // before the schema migration has been applied in that environment.
   return bookings
     .filter((b) => b.booking_status !== "waitlisted" && b.is_active)
     .map((b) => {
       const originalPosition = promotionMeta.get(b.id);
       const status: Attendee["status"] =
-        b.booking_status === "attended"
+        (b.booking_status as string) === "attended"
           ? "checked_in"
           : (b.booking_status as Attendee["status"]);
 
@@ -156,6 +180,16 @@ function mapClassWithBookings(
   const attendees = mapBookingsToAttendees(bookings, promotionMeta);
   const waitlist = mapBookingsToWaitlist(bookings);
 
+  // v0.8.4: fall back to the default 15 minutes if the column is
+  // missing (environment not yet migrated). Keeps the UI rendering
+  // instead of crashing on an undefined column.
+  const windowMinutes =
+    typeof cls.check_in_window_minutes === "number"
+      ? cls.check_in_window_minutes
+      : 15;
+  const { status: checkInStatus, opensAt: checkInOpensAt } =
+    deriveCheckInStatus(cls.starts_at, cls.ends_at, windowMinutes);
+
   return {
     id: cls.slug,
     name: cls.title,
@@ -169,6 +203,9 @@ function mapClassWithBookings(
       lifecycle === "upcoming"
         ? deriveCancellationWindowClosed(cls.starts_at, cls.cancellation_window_hours)
         : undefined,
+    checkInStatus,
+    checkInWindowMinutes: windowMinutes,
+    checkInOpensAt,
     attendees,
     waitlist: waitlist.length > 0 ? waitlist : undefined,
   };
@@ -496,16 +533,49 @@ export async function markAttendance(
  */
 export type CheckInSource = "client" | "operator";
 
-export type CheckInResult = {
+/**
+ * v0.8.4 gated-rejection status codes. These come from sf_check_in when
+ * the call is rejected because of the window or booking state, and let
+ * the UI render a specific message rather than parsing the prose.
+ *
+ *   too_early  — call arrived before (starts_at - check_in_window_minutes)
+ *   closed     — class has ended; no fresh client check-in allowed
+ *   not_booked — waitlisted / cancelled / late_cancel / no booking
+ */
+export type CheckInRejectionCode = "too_early" | "closed" | "not_booked";
+
+export type CheckInSuccess = {
   ok: true;
   source: CheckInSource;
+  // v0.8.4: set when the call was idempotent — the member was already
+  // checked in. No state flipped, no audit event was written. The UI
+  // should render "Already checked in" as a success, not an error.
+  alreadyCheckedIn: boolean;
 };
+
+export type CheckInRejection = {
+  ok: false;
+  code: CheckInRejectionCode;
+  message: string;
+  // Present when code === 'too_early'; ISO timestamp the window opens.
+  opensAt?: string;
+};
+
+export type CheckInResult = CheckInSuccess | CheckInRejection;
+
+function isRejectionCode(v: unknown): v is CheckInRejectionCode {
+  return v === "too_early" || v === "closed" || v === "not_booked";
+}
 
 export async function checkInMember(
   classSlug: string,
   memberSlug: string,
   source: CheckInSource,
 ): Promise<CheckInResult> {
+  // v0.8.4: the server can legitimately reply with a structured
+  // rejection (too early, class closed, not booked) — these are NOT
+  // thrown as errors because they are normal domain outcomes the UI
+  // renders verbatim. Only genuine RPC-transport errors throw.
   const { data, error } = await requireClient().rpc("sf_check_in", {
     p_class_slug: classSlug,
     p_member_slug: memberSlug,
@@ -518,11 +588,35 @@ export async function checkInMember(
   const result = (data ?? {}) as {
     ok?: boolean;
     source?: string;
+    already_checked_in?: boolean;
+    noop?: boolean;
     error?: string;
+    status_code?: string;
+    opens_at?: string;
   };
+
+  if (result.ok) {
+    return {
+      ok: true,
+      source: (result.source as CheckInSource) ?? source,
+      alreadyCheckedIn: Boolean(result.already_checked_in),
+    };
+  }
+
+  if (result.error && isRejectionCode(result.status_code)) {
+    return {
+      ok: false,
+      code: result.status_code,
+      message: result.error,
+      opensAt: result.opens_at,
+    };
+  }
+
+  // Anything else (invalid source, member not found, class not found,
+  // unstructured error) is a hard error — throw so it surfaces in the
+  // error-boundary-style UI path, not the gated-state UI.
   if (result.error) throw new Error(result.error);
-  if (!result.ok) throw new Error("sf_check_in: unexpected response");
-  return { ok: true, source: result.source as CheckInSource };
+  throw new Error("sf_check_in: unexpected response");
 }
 
 /**
