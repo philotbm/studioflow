@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import type { StudioClass } from "./data";
 import {
@@ -8,6 +9,28 @@ import {
   type ReconciliationSummary,
   type ReconciliationTone,
 } from "./reconciliation";
+
+// v0.8.6: minimal list filter modes. "all" keeps the existing
+// live / upcoming / completed sectioning; "needs_attention" flattens
+// to a single sorted list of watch + alert classes only.
+type FilterMode = "all" | "needs_attention";
+
+function needsAttention(summary: ReconciliationSummary | null): boolean {
+  return summary?.tone === "watch" || summary?.tone === "alert";
+}
+
+/** alert before watch; stable within same tone. */
+function severityRank(tone: ReconciliationTone | undefined): number {
+  return tone === "alert" ? 0 : tone === "watch" ? 1 : 2;
+}
+
+function summarise(cls: StudioClass): ReconciliationSummary | null {
+  try {
+    return reconcileClass(cls);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * v0.8.5: compact list-level indicator. Pulls the headline from the
@@ -54,18 +77,22 @@ function ListSignalPill({ summary }: { summary: ReconciliationSummary }) {
   );
 }
 
-function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
+function ClassCard({
+  cls,
+  muted,
+  summary: summaryOverride,
+}: {
+  cls: StudioClass;
+  muted?: boolean;
+  /** v0.8.6: pre-computed summary from the parent (filter-mode path)
+   *  so we don't re-derive per card. Falls back to a local derivation
+   *  for callers that don't pass one. */
+  summary?: ReconciliationSummary | null;
+}) {
   const isFull = cls.booked >= cls.capacity;
   const isUpcoming = cls.lifecycle === "upcoming";
-  // v0.8.5.1: never let a bad row break the whole list. reconcileClass
-  // itself is now neutral-safe, but an explicit try/null guard here is
-  // cheap insurance in case a future change regresses.
-  let summary: ReconciliationSummary | null = null;
-  try {
-    summary = reconcileClass(cls);
-  } catch {
-    summary = null;
-  }
+  const summary =
+    summaryOverride !== undefined ? summaryOverride : summarise(cls);
   const pillVisible = summary !== null && shouldShowPill(summary, cls.lifecycle);
   return (
     <li>
@@ -120,6 +147,25 @@ function ClassCard({ cls, muted }: { cls: StudioClass; muted?: boolean }) {
 
 export default function ClassesPage() {
   const { classes, loading, error } = useStore();
+  const [filter, setFilter] = useState<FilterMode>("all");
+
+  // v0.8.6: reconcile once per class for the filter / count / sort
+  // pass. ClassCard receives the pre-computed summary so we don't
+  // re-derive per card. The try/catch lives inside `summarise` so a
+  // single bad row can never break this pass.
+  const reconciled = useMemo(
+    () =>
+      classes.map((cls) => ({
+        cls,
+        summary: summarise(cls),
+      })),
+    [classes],
+  );
+
+  const attentionCount = useMemo(
+    () => reconciled.filter((r) => needsAttention(r.summary)).length,
+    [reconciled],
+  );
 
   if (loading) {
     return (
@@ -138,10 +184,6 @@ export default function ClassesPage() {
     );
   }
 
-  const liveClasses = classes.filter((c) => c.lifecycle === "live");
-  const upcoming = classes.filter((c) => c.lifecycle === "upcoming");
-  const completed = classes.filter((c) => c.lifecycle === "completed");
-
   return (
     <main className="mx-auto max-w-2xl">
       <div className="flex items-center justify-between">
@@ -151,42 +193,123 @@ export default function ClassesPage() {
         </button>
       </div>
 
-      {/* Live */}
-      {liveClasses.length > 0 && (
+      {/* v0.8.6 filter toggle */}
+      <div
+        className="mt-4 flex flex-wrap items-center gap-2"
+        role="group"
+        aria-label="Class list filter"
+      >
+        <button
+          type="button"
+          onClick={() => setFilter("all")}
+          aria-pressed={filter === "all"}
+          className={`rounded border px-3 py-1 text-xs transition-colors ${
+            filter === "all"
+              ? "border-white/40 bg-white/10 text-white"
+              : "border-white/15 text-white/60 hover:text-white hover:border-white/30"
+          }`}
+        >
+          Show all
+        </button>
+        <button
+          type="button"
+          onClick={() => setFilter("needs_attention")}
+          aria-pressed={filter === "needs_attention"}
+          disabled={attentionCount === 0 && filter !== "needs_attention"}
+          className={`rounded border px-3 py-1 text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+            filter === "needs_attention"
+              ? "border-amber-400/50 bg-amber-400/10 text-amber-200"
+              : "border-white/15 text-white/60 hover:text-white hover:border-white/30"
+          }`}
+        >
+          Needs attention ({attentionCount})
+        </button>
+      </div>
+
+      {filter === "needs_attention"
+        ? renderNeedsAttention(reconciled)
+        : renderAllSections(reconciled)}
+    </main>
+  );
+}
+
+/** v0.8.6 "Show all" render — preserves the v0.8.5 sectioning verbatim. */
+function renderAllSections(
+  reconciled: Array<{ cls: StudioClass; summary: ReconciliationSummary | null }>,
+) {
+  const live = reconciled.filter((r) => r.cls.lifecycle === "live");
+  const upcoming = reconciled.filter((r) => r.cls.lifecycle === "upcoming");
+  const completed = reconciled.filter((r) => r.cls.lifecycle === "completed");
+
+  return (
+    <>
+      {live.length > 0 && (
         <section className="mt-6">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
             <h2 className="text-sm font-medium text-green-400">Live now</h2>
           </div>
           <ul className="mt-3 flex flex-col gap-3">
-            {liveClasses.map((cls) => (
-              <ClassCard key={cls.id} cls={cls} />
+            {live.map(({ cls, summary }) => (
+              <ClassCard key={cls.id} cls={cls} summary={summary} />
             ))}
           </ul>
         </section>
       )}
 
-      {/* Upcoming */}
-      <section className={liveClasses.length > 0 ? "mt-8" : "mt-6"}>
+      <section className={live.length > 0 ? "mt-8" : "mt-6"}>
         <h2 className="text-sm font-medium text-white/70">Upcoming</h2>
         <ul className="mt-3 flex flex-col gap-3">
-          {upcoming.map((cls) => (
-            <ClassCard key={cls.id} cls={cls} />
+          {upcoming.map(({ cls, summary }) => (
+            <ClassCard key={cls.id} cls={cls} summary={summary} />
           ))}
         </ul>
       </section>
 
-      {/* Completed */}
       {completed.length > 0 && (
         <section className="mt-8">
           <h2 className="text-sm font-medium text-white/40">Completed</h2>
           <ul className="mt-3 flex flex-col gap-3">
-            {completed.map((cls) => (
-              <ClassCard key={cls.id} cls={cls} muted />
+            {completed.map(({ cls, summary }) => (
+              <ClassCard key={cls.id} cls={cls} summary={summary} muted />
             ))}
           </ul>
         </section>
       )}
-    </main>
+    </>
+  );
+}
+
+/** v0.8.6 "Needs attention" render — flat list sorted alert-first,
+ *  watch-second, original order preserved within a tone (sort is stable). */
+function renderNeedsAttention(
+  reconciled: Array<{ cls: StudioClass; summary: ReconciliationSummary | null }>,
+) {
+  const filtered = reconciled.filter((r) => needsAttention(r.summary));
+  const sorted = [...filtered].sort(
+    (a, b) => severityRank(a.summary?.tone) - severityRank(b.summary?.tone),
+  );
+
+  if (sorted.length === 0) {
+    return (
+      <section className="mt-6 rounded border border-white/10 px-4 py-6 text-center text-sm text-white/50">
+        Nothing needs attention — every class is healthy or neutral.
+      </section>
+    );
+  }
+
+  return (
+    <section className="mt-6">
+      <ul className="flex flex-col gap-3">
+        {sorted.map(({ cls, summary }) => (
+          <ClassCard
+            key={cls.id}
+            cls={cls}
+            summary={summary}
+            muted={cls.lifecycle === "completed"}
+          />
+        ))}
+      </ul>
+    </section>
   );
 }
