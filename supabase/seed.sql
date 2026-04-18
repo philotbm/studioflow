@@ -78,11 +78,12 @@ VALUES
  '[{"label":"Reliable regular","detail":"Perfect attendance on first pack — good retention candidate","tone":"positive"}]',
  '[{"date":"1 Apr","event":"Yoga Flow — Tue 07:00","type":"attended"},{"date":"31 Mar","event":"Barre Tone — Mon 10:00","type":"attended"},{"date":"25 Mar","event":"Purchased 5-Class Pass","type":"purchase"}]'),
 
--- 11. mairead-kinsella (v0.9.0 eligibility fixture: active class_pack, 0 credits)
--- The only seeded member that cleanly demonstrates the "no_credits" path
--- of sf_check_eligibility. Conor Brady is inactive + 0, so he hits the
--- account_inactive branch first. Mairead is explicitly active so she
--- exposes the credit-exhaustion gate on its own.
+-- 11. mairead-kinsella
+-- Documentation-only: seeded record for the "active class_pack, 0 credits"
+-- path. Only materialises in environments where seed.sql is actually
+-- applied. On environments where it hasn't been, the live QA handle for
+-- this eligibility path is qa-drained (upserted by /api/qa/refresh) —
+-- do not reference mairead-kinsella as a live validation URL.
 ('a0000001-0000-0000-0000-000000000011', 'mairead-kinsella', 'Mairead Kinsella', 'active', 'class_pack', '5-Class Pass', 0,
  '{"totalAttended":5,"lateCancels":0,"noShows":0,"cancellationRate":"0%","avgHoldBeforeCancel":"N/A","preCutoffCancels":0,"postCutoffCancels":0,"behaviourScore":98,"behaviourLabel":"Strong","classMix":[{"label":"Yoga Flow","count":3},{"label":"Barre Tone","count":2}]}',
  '{"activePlan":{"type":"credit_pack","product":"5-Class Pass","purchaseDate":"20 Mar","totalCredits":5,"creditsUsed":5,"creditsRemaining":0,"lastUsedDate":"7 Apr","purchaseStatus":"Consumed","usageLog":[]},"previousPurchases":[],"buyerPattern":"Reliable pack user — pack fully consumed"}',

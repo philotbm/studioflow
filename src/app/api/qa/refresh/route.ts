@@ -25,15 +25,32 @@ import { getSupabaseClient } from "@/lib/supabase";
 // live QA has a pure "no_credits" eligibility case. It never joins any
 // fixture class roster — its purpose is to appear in the Add-member
 // dropdown on the operator view and demonstrate a blocked booking.
-const QA_MEMBER_SLUGS = ["qa-alex", "qa-blake", "qa-casey", "qa-drained"] as const;
+//
+// v0.9.0.1: qa-cancel-test is active class_pack with exactly 3 credits,
+// re-set to 3 on every refresh. Used by /api/admin/verify-cancellation
+// to run the book→cancel credit trace against a deterministic baseline.
+const QA_MEMBER_SLUGS = [
+  "qa-alex",
+  "qa-blake",
+  "qa-casey",
+  "qa-drained",
+  "qa-cancel-test",
+] as const;
 type QaMemberSlug = (typeof QA_MEMBER_SLUGS)[number];
 
+// v0.9.0.1: qa-future is a far-future upcoming class (starts +3 days,
+// 24h cancellation window), so its cancellation cutoff is ~2 days from
+// now — any cancellation hits the on-time path. Used by the cancellation
+// QA trace to prove credit restoration. qa-too-early stays the late-
+// cancel side (starts in 60 min with 24h window → cutoff 23h ago →
+// any cancel there is late_cancel).
 const QA_CLASS_SLUGS = [
   "qa-too-early",
   "qa-open",
   "qa-already-in",
   "qa-closed",
   "qa-correction",
+  "qa-future",
 ] as const;
 type QaClassSlug = (typeof QA_CLASS_SLUGS)[number];
 
@@ -114,6 +131,14 @@ async function handle() {
       plan_name: "QA 5-Class Pass",
       credits_remaining: 0,
     },
+    {
+      slug: "qa-cancel-test",
+      full_name: "QA Cancel Test",
+      status: "active",
+      plan_type: "class_pack",
+      plan_name: "QA 5-Class Pass",
+      credits_remaining: 3,
+    },
   ];
   {
     const { error } = await client
@@ -189,6 +214,19 @@ async function handle() {
       instructor_name: "QA Staff",
       starts_at: addMinutes(now, -180),
       ends_at: addMinutes(now, -120),
+      capacity: 10,
+      location_name: "QA Studio",
+      cancellation_window_hours: 24,
+    },
+    {
+      // v0.9.0.1 on-time cancellation fixture. +3 days from now with a
+      // 24h window means the cancellation cutoff is ~48h from now, so
+      // any cancel hits the on-time (refund) path.
+      slug: "qa-future",
+      title: "QA — On-time Cancel Window",
+      instructor_name: "QA Staff",
+      starts_at: addMinutes(now, 60 * 24 * 3),
+      ends_at: addMinutes(now, 60 * 24 * 3 + 60),
       capacity: 10,
       location_name: "QA Studio",
       cancellation_window_hours: 24,
