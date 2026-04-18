@@ -19,14 +19,23 @@ import { getSupabaseClient } from "@/lib/supabase";
  */
 
 // v0.9.0: qa-drained (class_pack, 0 credits) added for the no_credits
-// eligibility QA path. Must stay in sync with /api/qa/refresh.
-const QA_MEMBER_SLUGS = ["qa-alex", "qa-blake", "qa-casey", "qa-drained"] as const;
+// eligibility QA path. v0.9.0.1: qa-cancel-test member and qa-future
+// class added for the book→cancel credit trace. Must stay in sync
+// with /api/qa/refresh.
+const QA_MEMBER_SLUGS = [
+  "qa-alex",
+  "qa-blake",
+  "qa-casey",
+  "qa-drained",
+  "qa-cancel-test",
+] as const;
 const QA_CLASS_SLUGS = [
   "qa-too-early",
   "qa-open",
   "qa-already-in",
   "qa-closed",
   "qa-correction",
+  "qa-future",
 ] as const;
 
 export async function GET() {
