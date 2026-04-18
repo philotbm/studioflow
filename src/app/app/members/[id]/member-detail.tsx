@@ -448,6 +448,38 @@ function statusBadgeStyle(status: string): string {
   }
 }
 
+/**
+ * v0.9.0.2 member credit truth alignment.
+ *
+ * purchase_insights_json.activePlan.creditsRemaining / creditsUsed
+ * are frozen seed-time values. The live balance lives in the members
+ * table's credits_remaining column, which sf_book_member /
+ * sf_cancel_booking mutate atomically. Rendering the seed snapshot
+ * on the same page as the live Booking Access panel produces two
+ * contradictory numbers for one member.
+ *
+ * This helper returns a reconciled copy of the active plan where the
+ * credit_pack remaining + used fields reflect the live column. For
+ * previous (historical) purchases the snapshot is left alone — those
+ * rows represent past packs and are not live truth.
+ *
+ * Rules:
+ *   - credit_pack active plan + live credits available → override
+ *     creditsRemaining = live credits (clamped ≥ 0)
+ *     creditsUsed      = totalCredits − creditsRemaining (clamped ≥ 0)
+ *   - any other active-plan type (unlimited, simple) or missing live
+ *     credits → pass through unchanged.
+ */
+function reconcileActivePlanWithLiveCredits(
+  entry: PurchaseEntry,
+  liveCredits: number | null,
+): PurchaseEntry {
+  if (entry.type !== "credit_pack" || liveCredits === null) return entry;
+  const remaining = Math.max(0, liveCredits);
+  const used = Math.max(0, entry.totalCredits - remaining);
+  return { ...entry, creditsRemaining: remaining, creditsUsed: used };
+}
+
 function PurchaseCard({ entry }: { entry: PurchaseEntry }) {
   const status = entry.purchaseStatus;
   const isActive = status === "Active";
@@ -820,7 +852,16 @@ export default function MemberDetail({ id }: { id: string }) {
           )}
 
           <div className="flex flex-col gap-4">
-            <PurchaseCard entry={pi.activePlan} />
+            {/* v0.9.0.2: active plan renders against the live credit
+                column so the card can't contradict the Booking Access
+                panel. Previous (historical) purchases keep their
+                frozen snapshot — they are past state, not live truth. */}
+            <PurchaseCard
+              entry={reconcileActivePlanWithLiveCredits(
+                pi.activePlan,
+                member.credits,
+              )}
+            />
             {(pi.previousPurchases ?? []).map((p, i) => (
               <PurchaseCard key={i} entry={p} />
             ))}
