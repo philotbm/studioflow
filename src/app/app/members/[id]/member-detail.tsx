@@ -45,18 +45,45 @@ const ADJUST_REASON_LABELS: Record<ManualAdjustReason, string> = {
   service_recovery: "Service recovery",
 };
 
+/**
+ * v0.9.1 normalised ledger labels — plain business language at render
+ * time. The stored reason_code values in credit_transactions are not
+ * changed; this is a display-only translation so the operator reads
+ * one consistent vocabulary.
+ *
+ * Manual adjustment reason codes all map to a single "Manual
+ * adjustment" primary label; the specific reason (bereavement /
+ * medical / etc.) is surfaced in the subtitle line via
+ * MANUAL_REASON_SUBTITLES so it stays visible without cluttering the
+ * primary label.
+ *
+ * "late_cancel" is included defensively so any ledger row that ever
+ * carries that reason code renders correctly. Today sf_cancel_booking
+ * writes no ledger row for a late_cancel (by policy — no credit is
+ * returned), so this entry is latent until/unless that changes.
+ */
 const LEDGER_REASON_LABELS: Record<string, string> = {
-  booking: "Booking",
-  cancel_refund: "Cancellation refund",
+  booking: "Class booked",
+  cancel_refund: "Cancellation (credit returned)",
+  late_cancel: "Late cancellation (no credit returned)",
   auto_promotion: "Auto-promotion",
   manual_promotion: "Manual promotion",
   unpromote_refund: "Unpromote refund",
-  bereavement: "Adj · Bereavement",
-  medical: "Adj · Medical",
-  studio_error: "Adj · Studio error",
-  goodwill: "Adj · Goodwill",
-  admin_correction: "Adj · Admin correction",
-  service_recovery: "Adj · Service recovery",
+  bereavement: "Manual adjustment",
+  medical: "Manual adjustment",
+  studio_error: "Manual adjustment",
+  goodwill: "Manual adjustment",
+  admin_correction: "Manual adjustment",
+  service_recovery: "Manual adjustment",
+};
+
+const MANUAL_REASON_SUBTITLES: Record<string, string> = {
+  bereavement: "Bereavement",
+  medical: "Medical issue",
+  studio_error: "Studio error",
+  goodwill: "Goodwill",
+  admin_correction: "Admin correction",
+  service_recovery: "Service recovery",
 };
 
 /**
@@ -283,7 +310,48 @@ function ManualAdjustControl({
   );
 }
 
-function RecentLedgerPanel({ memberSlug }: { memberSlug: string }) {
+/**
+ * v0.9.1 running balance reconstruction. The ledger API returns rows
+ * newest-first; this walks them oldest-first, grounds the sequence in
+ * the live member.credits value, and emits a per-row running balance
+ * that always agrees with the current snapshot.
+ *
+ * Algorithm:
+ *   - sumDelta = sum of deltas in the returned window
+ *   - balanceBeforeWindow = liveCredits − sumDelta
+ *   - walk oldest→newest, accumulate: balance_after[i] = balance_after[i-1] + delta[i]
+ *   - result: balance_after[N-1] === liveCredits (provably)
+ *
+ * When liveCredits is null (unlimited-plan members) we fall back to
+ * the stored balance_after column so the panel still renders coherently.
+ */
+function computeRunningBalances(
+  entriesNewestFirst: LedgerEntry[],
+  liveCredits: number | null,
+): Map<string, number> {
+  const result = new Map<string, number>();
+  if (entriesNewestFirst.length === 0) return result;
+  const oldestFirst = [...entriesNewestFirst].reverse();
+  if (liveCredits === null) {
+    for (const e of oldestFirst) result.set(e.id, e.balanceAfter);
+    return result;
+  }
+  const sumDelta = oldestFirst.reduce((acc, e) => acc + e.delta, 0);
+  let running = liveCredits - sumDelta;
+  for (const e of oldestFirst) {
+    running += e.delta;
+    result.set(e.id, running);
+  }
+  return result;
+}
+
+function RecentLedgerPanel({
+  memberSlug,
+  liveCredits,
+}: {
+  memberSlug: string;
+  liveCredits: number | null;
+}) {
   const { getLedger, members } = useStore();
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
 
@@ -304,11 +372,22 @@ function RecentLedgerPanel({ memberSlug }: { memberSlug: string }) {
     return <p className="text-xs text-white/40">No credit ledger activity yet.</p>;
   }
   const now = Date.now();
+  const runningBalances = computeRunningBalances(entries, liveCredits);
   return (
     <ul className="flex flex-col gap-2">
       {entries.map((e) => {
         const label = LEDGER_REASON_LABELS[e.reasonCode] ?? e.reasonCode;
         const deltaColor = e.delta > 0 ? "text-green-400" : "text-amber-400";
+        const runningBalance = runningBalances.get(e.id) ?? e.balanceAfter;
+        const manualReason = MANUAL_REASON_SUBTITLES[e.reasonCode];
+        // Subtitle composition: source tag, then — when this row is a
+        // manual adjustment — the specific reason, then the operator's
+        // note if one was entered.
+        const subtitleParts: string[] = [
+          e.source === "operator" ? "Operator" : "System",
+        ];
+        if (manualReason) subtitleParts.push(manualReason);
+        if (e.note) subtitleParts.push(e.note);
         return (
           <li
             key={e.id}
@@ -317,8 +396,7 @@ function RecentLedgerPanel({ memberSlug }: { memberSlug: string }) {
             <div className="flex min-w-0 flex-col gap-0.5">
               <span className="text-sm">{label}</span>
               <span className="text-[11px] text-white/30">
-                {e.source === "operator" ? "Operator · " : "System · "}
-                {e.note ?? "—"}
+                {subtitleParts.join(" · ")}
               </span>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-0.5">
@@ -326,7 +404,7 @@ function RecentLedgerPanel({ memberSlug }: { memberSlug: string }) {
                 {e.delta > 0 ? `+${e.delta}` : e.delta}
               </span>
               <span className="text-[11px] text-white/30">
-                bal {e.balanceAfter} · {formatRelative(new Date(e.createdAt).getTime(), now)}
+                bal {runningBalance} · {formatRelative(new Date(e.createdAt).getTime(), now)}
               </span>
             </div>
           </li>
@@ -704,11 +782,17 @@ export default function MemberDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* Recent credit ledger — v0.8.0 */}
+      {/* Credit history — v0.9.1: every credit change is recorded here */}
       <div className="mt-6">
-        <h2 className="text-sm font-medium text-white/70">Recent credit ledger</h2>
+        <h2 className="text-sm font-medium text-white/70">Credit history</h2>
+        <p className="mt-1 text-xs text-white/40">
+          Every credit change is recorded here.
+        </p>
         <div className="mt-3">
-          <RecentLedgerPanel memberSlug={member.id} />
+          <RecentLedgerPanel
+            memberSlug={member.id}
+            liveCredits={member.credits}
+          />
         </div>
       </div>
 
