@@ -153,8 +153,22 @@ function AddMemberControl({
         </select>
         <button
           onClick={handleBook}
-          disabled={!selectedSlug || busy}
-          className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40 disabled:opacity-30"
+          // v0.9.2: pre-emptive UI gate. The server (sf_book_member)
+          // remains the authoritative enforcement point, but this keeps
+          // operators from clicking Book for a member who is already
+          // known to be blocked. The server call still happens on any
+          // click that slips through (e.g. state races).
+          disabled={
+            !selectedSlug ||
+            busy ||
+            (selectedAccess ? !selectedAccess.canBook : false)
+          }
+          title={
+            selectedAccess && !selectedAccess.canBook
+              ? `Blocked — ${selectedAccess.reason}`
+              : undefined
+          }
+          className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40 disabled:opacity-30 disabled:cursor-not-allowed"
         >
           {busy ? "..." : "Book"}
         </button>
@@ -380,16 +394,37 @@ function WaitlistSection({
                     Remove
                   </button>
                 )}
-                {canAcceptMore && entry.memberId ? (
-                  <button
-                    onClick={() => onPromote(classId, entry.memberId!)}
-                    className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40"
-                  >
-                    Promote
-                  </button>
-                ) : !canAcceptMore ? (
-                  <span className="text-xs text-white/30">Class full</span>
-                ) : null}
+                {/* v0.9.2: Promote is gated by the waitlisted member's
+                    own booking access, not just capacity. sf_promote_member
+                    server-side already rejects ineligible promotions; the
+                    UI now reflects the same truth so operators can't send
+                    a doomed promote click. */}
+                {(() => {
+                  const memberCanBook = member?.bookingAccess.canBook ?? true;
+                  const memberBlockReason = member?.bookingAccess.reason;
+                  if (!canAcceptMore) {
+                    return <span className="text-xs text-white/30">Class full</span>;
+                  }
+                  if (!entry.memberId) return null;
+                  if (!memberCanBook) {
+                    return (
+                      <span
+                        className="text-xs text-amber-400/70"
+                        title={memberBlockReason}
+                      >
+                        Blocked — {memberBlockReason}
+                      </span>
+                    );
+                  }
+                  return (
+                    <button
+                      onClick={() => onPromote(classId, entry.memberId!)}
+                      className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40"
+                    >
+                      Promote
+                    </button>
+                  );
+                })()}
               </div>
             </li>
           );
