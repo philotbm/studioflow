@@ -53,6 +53,19 @@ async function handle(req: Request) {
       { status: 400 },
     );
   }
+  // v0.9.3: QA-scope guard. sf_promote_member has real side effects
+  // (flips a waitlisted booking to booked, writes a ledger row via
+  // sf_consume_credit). Restricted to qa-* fixture slugs only.
+  if (!memberSlug.startsWith("qa-") || !classSlug.startsWith("qa-")) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "qa_scope_only: this QA trace endpoint only accepts qa-* fixture slugs",
+      },
+      { status: 400 },
+    );
+  }
 
   const client = getSupabaseClient();
   if (!client) {
