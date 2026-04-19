@@ -96,7 +96,7 @@ function sanitiseJson(input: unknown): { changed: boolean; value: unknown } {
   return { changed: false, value: input };
 }
 
-async function handle() {
+async function handle(confirm: boolean) {
   const client = getSupabaseClient();
   if (!client) {
     return NextResponse.json(
@@ -118,6 +118,48 @@ async function handle() {
   }
 
   const members = rows ?? [];
+  // Preview pass — count what WOULD be fixed without writing anything.
+  const preview: Array<{ slug: string; columns: string[] }> = [];
+  let previewColumns = 0;
+  for (const m of members as Array<Record<string, unknown>>) {
+    const columnsWouldFix: string[] = [];
+    const updates: Record<string, unknown> = {};
+    for (const col of JSON_COLUMNS as readonly JsonColumn[]) {
+      const r = sanitiseJson(m[col]);
+      if (r.changed) {
+        updates[col] = r.value;
+        columnsWouldFix.push(col);
+      }
+    }
+    if (columnsWouldFix.length > 0) {
+      const slug = typeof m.slug === "string" ? m.slug : "(unknown)";
+      preview.push({ slug, columns: columnsWouldFix });
+      previewColumns += columnsWouldFix.length;
+    }
+  }
+
+  // v0.9.3.1 dry-run-by-default. The write path requires an explicit
+  // { confirm: true } in the POST body or ?confirm=true query param.
+  // Before v0.9.3.1 any unauthenticated POST ran the write; now the
+  // endpoint is safe to leave exposed in production because no caller
+  // can accidentally mutate data without explicit opt-in.
+  if (!confirm) {
+    return NextResponse.json({
+      ok: true,
+      mode: "dry_run",
+      totalMembers: members.length,
+      wouldFixMembers: preview.length,
+      wouldFixColumns: previewColumns,
+      preview,
+      patterns: Object.keys(MOJIBAKE),
+      note:
+        preview.length === 0
+          ? "Already clean — no rows need repair."
+          : "Dry run only. Re-send with { confirm: true } (POST body) or ?confirm=true to apply.",
+    });
+  }
+
+  // Confirmed write path — perform the updates.
   let fixedMembers = 0;
   let fixedColumns = 0;
   const fixed: Array<{ slug: string; columns: string[] }> = [];
@@ -127,8 +169,7 @@ async function handle() {
     const updates: Record<string, unknown> = {};
     const columnsFixed: string[] = [];
     for (const col of JSON_COLUMNS as readonly JsonColumn[]) {
-      const current = m[col];
-      const r = sanitiseJson(current);
+      const r = sanitiseJson(m[col]);
       if (r.changed) {
         updates[col] = r.value;
         columnsFixed.push(col);
@@ -153,6 +194,7 @@ async function handle() {
 
   return NextResponse.json({
     ok: true,
+    mode: "write",
     totalMembers: members.length,
     fixedMembers,
     fixedColumns,
@@ -162,10 +204,28 @@ async function handle() {
   });
 }
 
-export async function POST() {
-  return handle();
+function confirmFromUrl(req: Request): boolean {
+  const url = new URL(req.url);
+  const v = url.searchParams.get("confirm");
+  return v === "true" || v === "1" || v === "yes";
 }
 
-export async function GET() {
-  return handle();
+export async function POST(req: Request) {
+  // Accept confirm from either the body or the query string so curl
+  // and fetch both work. Body takes precedence.
+  let confirm = confirmFromUrl(req);
+  try {
+    const body = (await req.json()) as { confirm?: unknown };
+    if (body && typeof body === "object" && body.confirm !== undefined) {
+      confirm = body.confirm === true;
+    }
+  } catch {
+    // no body / not JSON — stick with query-string value
+  }
+  return handle(confirm);
+}
+
+export async function GET(req: Request) {
+  // GET is always a dry run — never mutates.
+  return handle(false);
 }
