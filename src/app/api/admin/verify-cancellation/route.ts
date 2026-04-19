@@ -67,6 +67,19 @@ async function handle(req: Request) {
       { status: 400 },
     );
   }
+  // v0.9.3: QA-scope guard. This endpoint does a full book→cancel
+  // cycle with real side effects (ledger rows, booking state). Must
+  // not touch real member / class data — restricted to qa-* slugs.
+  if (!memberSlug.startsWith("qa-") || !classSlug.startsWith("qa-")) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "qa_scope_only: this QA trace endpoint only accepts qa-* fixture slugs",
+      },
+      { status: 400 },
+    );
+  }
 
   const client = getSupabaseClient();
   if (!client) {

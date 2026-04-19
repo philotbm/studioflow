@@ -50,6 +50,20 @@ async function handle(req: Request) {
       { status: 400 },
     );
   }
+  // v0.9.3: QA-scope guard. This endpoint has real side effects
+  // (sf_book_member writes a class_bookings row and consumes a credit
+  // via sf_consume_credit) — it must not accidentally mutate real
+  // member / class data. Restricted to qa-* fixture slugs only.
+  if (!memberSlug.startsWith("qa-") || !classSlug.startsWith("qa-")) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "qa_scope_only: this QA trace endpoint only accepts qa-* fixture slugs",
+      },
+      { status: 400 },
+    );
+  }
 
   const client = getSupabaseClient();
   if (!client) {
