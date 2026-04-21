@@ -35,7 +35,6 @@ export type AccessJson = {
   action_hint: string;
   status_code:
     | "ok"
-    | "account_inactive"
     | "no_credits"
     | "trial_used"
     | "no_entitlement"

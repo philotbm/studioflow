@@ -3,7 +3,6 @@ import type {
   BookingAccessStatus,
   BookingAccess,
   PlanType,
-  AccountStatus,
 } from "@/app/app/members/data";
 
 /**
@@ -196,11 +195,7 @@ export function restorationForCancel(
   };
 }
 
-/**
- * Helper: does this account status intrinsically block booking? Primary
- * check still happens server-side — this is a UI-only shortcut used by
- * the member list to dim obviously-blocked rows.
- */
-export function isAccountBlocked(status: AccountStatus): boolean {
-  return status === "inactive";
-}
+// v0.9.4.1: `isAccountBlocked` helper removed. Account status is not a
+// StudioFlow product concept at this phase. Booking gating is entitlement
+// only (unlimited OR credits > 0). The server's `bookingAccess.canBook`
+// is the single source of truth the UI must honour.

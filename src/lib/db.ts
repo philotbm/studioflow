@@ -112,13 +112,16 @@ function mapAccess(a: AccessJson | null | undefined): BookingAccess {
 }
 
 function mapMemberRow(r: MemberAccessRow): Member {
+  // v0.9.4.1: members.status is deliberately NOT mapped onto the app
+  // Member model. Account status is not a StudioFlow product concept at
+  // this phase; the DB column still exists (untouched by this release)
+  // but the app layer does not surface it.
   return {
     id: r.slug,
     name: r.full_name,
     plan: r.plan_name,
     planType: r.plan_type,
     credits: r.plan_type === "unlimited" ? null : (r.credits_remaining ?? 0),
-    accountStatus: r.status,
     bookingAccess: mapAccess(r.access),
     insights: (r.insights_json ?? {}) as MemberInsights,
     purchaseInsights: (r.purchase_insights_json ?? {}) as PurchaseInsights,
