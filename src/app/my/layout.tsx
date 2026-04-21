@@ -4,18 +4,19 @@ import Link from "next/link";
 import { StoreProvider } from "@/lib/store";
 
 /**
- * v0.10.0 member-facing booking shell.
+ * v0.11.0 Member Home shell.
  *
- * Deliberately minimal. Member lands here with a URL in the form
- * /book/{slug} — no auth, no role check. The same un-gated pattern
- * the /checkin and /instructor shells use.
+ * The member-facing surface lives under /my. Each member reaches their
+ * home at /my/{memberSlug} — one personal URL per member. No auth in
+ * this phase; same posture as /checkin and /instructor.
  *
- * This surface is read-only for everything the operator owns — it
- * reuses bookMember / cancelBooking from the shared store, which
- * route through the same sf_book_member / sf_cancel_booking server
- * paths the operator UI uses. No new booking logic lives here.
+ * This layout deliberately keeps the chrome minimal. When v0.11.x grows
+ * member sub-sections (class history, plan details, perks, etc.), they
+ * will attach under /my/{memberSlug}/... and nav items appear here.
+ * For v0.11.0 the header is a simple StudioFlow brand mark + a Member
+ * role tag.
  */
-export default function BookLayout({
+export default function MyLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
@@ -23,7 +24,7 @@ export default function BookLayout({
       <div className="min-h-screen bg-black text-white">
         <header className="flex items-center justify-between border-b border-white/10 px-6 py-4">
           <Link
-            href="/book"
+            href="/"
             className="text-sm font-medium tracking-wide text-white/80 hover:text-white"
           >
             StudioFlow
