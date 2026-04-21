@@ -122,8 +122,18 @@ export type Member = {
 };
 
 // Seed data removed in v0.4.8 — Supabase is now the source of truth.
+// Used by generateStaticParams on /app/members/[id], /my/[memberSlug],
+// and /book/[memberSlug] to SSG-prerender detail pages for the demo
+// roster. Members outside this list still render on-demand via SSR —
+// the list is a perf hint, not a guard.
+//
+// v0.12.1: mairead-kinsella added. She was in seed.sql from the start
+// but documented as "only materialises where seed.sql is applied" —
+// with the /api/admin/upsert-demo-members endpoint that caveat goes
+// away and she becomes a first-class demo case for the no-entitlement
+// commerce-entry flow.
 export const seedMemberSlugs = [
   "emma-kelly", "ciara-byrne", "declan-power", "saoirse-flynn",
   "sean-brennan", "clodagh-murray", "conor-brady", "aoife-nolan",
-  "padraig-roche", "fiona-healy",
+  "padraig-roche", "fiona-healy", "mairead-kinsella",
 ];
