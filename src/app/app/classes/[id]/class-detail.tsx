@@ -55,23 +55,117 @@ const lifecycleStyle: Record<string, string> = {
 };
 
 // ── Add member control ──────────────────────────────────────────────────
+/**
+ * v0.9.5 Booking Flow Completion — outcome kinds.
+ *
+ * Each kind has a matching OutcomeCard render below. All four remain
+ * visible until the operator dismisses or starts a new booking — no
+ * auto-timeout. This is a presentation change only: booking /
+ * waitlist / blocked semantics, order, and FIFO position all come
+ * straight from the existing sf_book_member / sf_check_eligibility
+ * server paths. No new rules.
+ */
 type AddFeedback =
-  | { kind: "ok"; text: string }
-  | { kind: "blocked"; text: string; hint: string }
+  | { kind: "booked"; memberName: string; consumption: string }
+  | { kind: "waitlisted"; memberName: string; position: number }
+  | { kind: "already-in"; memberName: string }
+  | { kind: "blocked"; memberName: string; reason: string; hint: string }
   | { kind: "error"; text: string };
+
+function OutcomeCard({
+  feedback,
+  onDismiss,
+}: {
+  feedback: AddFeedback;
+  onDismiss: () => void;
+}) {
+  const palette = (() => {
+    switch (feedback.kind) {
+      case "booked":
+        return { border: "border-green-400/30", text: "text-green-400" };
+      case "waitlisted":
+        return { border: "border-white/25", text: "text-white/80" };
+      case "already-in":
+        return { border: "border-white/15", text: "text-white/60" };
+      case "blocked":
+        return { border: "border-amber-400/40", text: "text-amber-400" };
+      case "error":
+        return { border: "border-red-400/40", text: "text-red-400" };
+    }
+  })();
+
+  const title = (() => {
+    switch (feedback.kind) {
+      case "booked":
+        return `Booked — ${feedback.memberName}`;
+      case "waitlisted":
+        return `Added to waitlist — ${feedback.memberName}`;
+      case "already-in":
+        return `${feedback.memberName} is already in this class`;
+      case "blocked":
+        return `Cannot book ${feedback.memberName}`;
+      case "error":
+        return "Booking failed";
+    }
+  })();
+
+  const detail = (() => {
+    switch (feedback.kind) {
+      case "booked":
+        return feedback.consumption;
+      case "waitlisted":
+        return `Position #${feedback.position} in the waitlist (first come, first served)`;
+      case "already-in":
+        return null;
+      case "blocked":
+        return `${feedback.reason}. ${feedback.hint}`;
+      case "error":
+        return feedback.text;
+    }
+  })();
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`mt-2 flex items-start justify-between gap-3 rounded border px-3 py-2 ${palette.border}`}
+    >
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className={`text-sm font-medium ${palette.text}`}>{title}</span>
+        {detail && <span className="text-xs text-white/50">{detail}</span>}
+      </div>
+      <button
+        onClick={onDismiss}
+        aria-label="Dismiss outcome"
+        className="shrink-0 text-white/30 hover:text-white/70"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
 
 function AddMemberControl({
   classId,
   existingMemberIds,
+  canAcceptMore,
+  spotsLeft,
+  waitlistLength,
 }: {
   classId: string;
   existingMemberIds: Set<string>;
+  canAcceptMore: boolean;
+  spotsLeft: number;
+  waitlistLength: number;
 }) {
   const { members, bookMember } = useStore();
   const [selectedSlug, setSelectedSlug] = useState("");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<AddFeedback | null>(null);
 
+  // Alphabetical ordering preserved (fetchAllMembers orders by full_name).
+  // v0.9.5 does NOT re-sort or rank — first come, first served remains
+  // the only ordering rule in the booking flow.
   const availableMembers = members.filter(
     (m) => !existingMemberIds.has(m.id),
   );
@@ -85,33 +179,46 @@ function AddMemberControl({
     : undefined;
   const selectedAccess = selectedMember?.bookingAccess ?? null;
 
+  // v0.9.5: dynamic primary action label. When the class has space,
+  // clicking runs a booking; when full, the same server call ends up
+  // adding to the waitlist (sf_book_member decides). Previewing the
+  // likely outcome here is a UI convenience only — no rule change.
+  const actionLabel = canAcceptMore ? "Book" : "Add to waitlist";
+
   async function handleBook() {
-    if (!selectedSlug || busy) return;
+    if (!selectedSlug || busy || !selectedMember) return;
     setBusy(true);
     setFeedback(null);
     // v0.9.0: capture the pre-booking entitlement decision so we can
     // report "1 credit used" / "unlimited" / "drop-in" on success.
-    const preBookingDecision = selectedMember
-      ? decideEligibility(selectedMember)
-      : null;
+    const preBookingDecision = decideEligibility(selectedMember);
+    // Capture the waitlist length BEFORE the call so a waitlisted
+    // outcome can report the FIFO position it landed at.
+    const waitlistBefore = waitlistLength;
+    const memberName = selectedMember.name;
     try {
       const result = await bookMember(classId, selectedSlug);
       if (result.status === "blocked") {
         setFeedback({
           kind: "blocked",
-          text: result.access.reason,
+          memberName,
+          reason: result.access.reason,
           hint: result.access.actionHint,
         });
       } else if (result.alreadyExists) {
-        setFeedback({ kind: "ok", text: "Already in this class" });
+        setFeedback({ kind: "already-in", memberName });
+      } else if (result.status === "booked") {
+        setFeedback({
+          kind: "booked",
+          memberName,
+          consumption: consumedLabel(preBookingDecision),
+        });
       } else {
-        const base =
-          result.status === "booked" ? "Booked" : "Added to waitlist";
-        const consumption =
-          result.status === "booked" && preBookingDecision
-            ? ` · ${consumedLabel(preBookingDecision)}`
-            : "";
-        setFeedback({ kind: "ok", text: `${base}${consumption}` });
+        setFeedback({
+          kind: "waitlisted",
+          memberName,
+          position: waitlistBefore + 1,
+        });
       }
       if (result.status !== "blocked") setSelectedSlug("");
     } catch (e) {
@@ -121,28 +228,59 @@ function AddMemberControl({
       });
     } finally {
       setBusy(false);
-      setTimeout(() => setFeedback(null), 4000);
+      // v0.9.5: outcome card persists until dismissed or until the
+      // operator picks another member — replaces the old 4s timeout
+      // which made "what just happened?" feedback vanish too fast.
     }
   }
 
   if (availableMembers.length === 0) return null;
 
-  const feedbackColor =
-    feedback?.kind === "blocked"
-      ? "text-amber-400/90"
-      : feedback?.kind === "error"
-        ? "text-red-400/90"
-        : "text-green-400/80";
+  // v0.9.5: capacity context rendered next to the control so the
+  // operator can see at-a-glance whether the next booking will take a
+  // seat or go to the waitlist. Purely informational. No ranking, no
+  // recommendation, no rule.
+  const capacityLine = (() => {
+    if (spotsLeft >= 2) {
+      return {
+        text: `${spotsLeft} spots available`,
+        tone: "text-white/60",
+      };
+    }
+    if (spotsLeft === 1) {
+      return {
+        text: "1 spot left — next booking fills the class",
+        tone: "text-white/70",
+      };
+    }
+    return {
+      text: `Class full — next booking goes to waitlist (position #${waitlistLength + 1})`,
+      tone: "text-amber-400/80",
+    };
+  })();
+
+  function onPickMember(slug: string) {
+    setSelectedSlug(slug);
+    // Clearing stale feedback when starting a new pick keeps the
+    // outcome card unambiguous — it always reflects the most recent
+    // action.
+    if (feedback) setFeedback(null);
+  }
 
   return (
     <div className="mt-3 flex flex-col gap-1.5">
+      <p className={`text-[11px] ${capacityLine.tone}`}>{capacityLine.text}</p>
       <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="add-member-select" className="sr-only">
+          Choose a member to book
+        </label>
         <select
+          id="add-member-select"
           value={selectedSlug}
-          onChange={(e) => setSelectedSlug(e.target.value)}
+          onChange={(e) => onPickMember(e.target.value)}
           className="rounded border border-white/20 bg-black px-2 py-1.5 text-xs text-white/80 outline-none focus:border-white/40"
         >
-          <option value="">Add member...</option>
+          <option value="">Choose a member…</option>
           {availableMembers.map((m) => {
             const a = m.bookingAccess;
             const suffix = a.canBook
@@ -172,18 +310,10 @@ function AddMemberControl({
               ? `Blocked — ${selectedAccess.reason}`
               : undefined
           }
-          className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40 disabled:opacity-30 disabled:cursor-not-allowed"
+          className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/70 hover:text-white hover:border-white/40 disabled:opacity-30 disabled:cursor-not-allowed"
         >
-          {busy ? "..." : "Book"}
+          {busy ? "…" : actionLabel}
         </button>
-        {feedback && (
-          <span className={`text-xs ${feedbackColor}`}>
-            {feedback.text}
-            {feedback.kind === "blocked" && (
-              <span className="ml-1 text-white/40">— {feedback.hint}</span>
-            )}
-          </span>
-        )}
       </div>
 
       {selectedAccess && selectedMember && (() => {
@@ -214,6 +344,11 @@ function AddMemberControl({
                 <span className="ml-1 text-white/30">
                   · {consumptionLabel(decideEligibility(selectedMember))}
                 </span>
+                {!canAcceptMore && (
+                  <span className="ml-1 text-amber-400/70">
+                    · Class full — this will join the waitlist
+                  </span>
+                )}
               </div>
             ) : (
               <div className="mt-1">
@@ -226,6 +361,10 @@ function AddMemberControl({
           </div>
         );
       })()}
+
+      {feedback && (
+        <OutcomeCard feedback={feedback} onDismiss={() => setFeedback(null)} />
+      )}
     </div>
   );
 }
@@ -606,6 +745,13 @@ export default function ClassDetail({ id }: { id: string }) {
     (a) => a.promotionType !== "auto",
   ).length;
   const canAcceptMore = isUpcoming && nonAutoAttendeeCount < cls.capacity;
+  // v0.9.5: capacity numbers surfaced to the Add Member control so the
+  // operator sees at-a-glance how many seats remain and, when full,
+  // which waitlist position the next booking would land at. No
+  // rule change — both values are derived from the same data the
+  // header already uses.
+  const spotsLeft = Math.max(0, cls.capacity - nonAutoAttendeeCount);
+  const waitlistLength = cls.waitlist?.length ?? 0;
 
   // Collect all member IDs already in this class (attendees + waitlist)
   const existingMemberIds = new Set<string>();
@@ -693,6 +839,9 @@ export default function ClassDetail({ id }: { id: string }) {
           <AddMemberControl
             classId={cls.id}
             existingMemberIds={existingMemberIds}
+            canAcceptMore={canAcceptMore}
+            spotsLeft={spotsLeft}
+            waitlistLength={waitlistLength}
           />
         )}
 
