@@ -966,3 +966,65 @@ export async function fetchRecentLedgerEntries(
     createdAt: r.created_at,
   }));
 }
+
+// ── v0.13.1: purchase history reader ────────────────────────────────
+
+/**
+ * A single row from the v0.13.0 `purchases` table, projected onto a
+ * camelCase shape for the operator member-detail surface. Mirrors the
+ * TS convention used for ledger + audit reads above.
+ */
+export type PurchaseRecord = {
+  id: string;
+  planId: string;
+  source: "stripe" | "fake";
+  externalId: string;
+  createdAt: string;
+};
+
+/**
+ * Recent purchases for one member, newest first. Used by the
+ * operator Purchase history panel on /app/members/[id]. Returns
+ * an empty array (not an error) if the member has no purchases
+ * yet — that's the normal state for members who haven't hit the
+ * checkout flow.
+ */
+export async function fetchMemberPurchases(
+  memberSlug: string,
+  limit = 10,
+): Promise<PurchaseRecord[]> {
+  const { data: mem } = await requireClient()
+    .from("members")
+    .select("id")
+    .eq("slug", memberSlug)
+    .single();
+  if (!mem) return [];
+
+  const { data, error } = await requireClient()
+    .from("purchases")
+    .select("id, plan_id, source, external_id, created_at")
+    .eq("member_id", mem.id)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error(
+      "[fetchMemberPurchases] query failed:",
+      error.message,
+    );
+    return [];
+  }
+  return (data as Array<{
+    id: string;
+    plan_id: string;
+    source: "stripe" | "fake";
+    external_id: string;
+    created_at: string;
+  }>).map((r) => ({
+    id: r.id,
+    planId: r.plan_id,
+    source: r.source,
+    externalId: r.external_id,
+    createdAt: r.created_at,
+  }));
+}
