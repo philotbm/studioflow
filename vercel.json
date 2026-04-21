@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/admin/rebase-demo-classes",
+      "schedule": "0 3 * * *"
+    }
+  ]
+}
