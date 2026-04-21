@@ -15,6 +15,7 @@ import {
   accessTypeLabel,
   type MembershipTone,
 } from "@/lib/memberships";
+import { PlansSection, type PlanOption } from "./plans-section";
 
 /**
  * v0.11.0 Member Home Foundation.
@@ -75,6 +76,10 @@ type Outcome =
       hint: string;
     }
   | {
+      kind: "purchase-placeholder";
+      planName: string;
+    }
+  | {
       kind: "error";
       text: string;
     };
@@ -124,6 +129,7 @@ function OutcomeCard({
         return { border: "border-white/20", text: "text-white/80" };
       case "late-cancel":
       case "blocked":
+      case "purchase-placeholder":
         return { border: "border-amber-400/40", text: "text-amber-400" };
       case "error":
         return { border: "border-red-400/40", text: "text-red-400" };
@@ -144,6 +150,8 @@ function OutcomeCard({
         return `Late cancel — ${outcome.className}`;
       case "blocked":
         return `Can't book ${outcome.className}`;
+      case "purchase-placeholder":
+        return `Thanks for choosing ${outcome.planName}`;
       case "error":
         return "Something went wrong";
     }
@@ -165,6 +173,8 @@ function OutcomeCard({
         return `${outcome.when} · No credit returned (cancelled after the window)`;
       case "blocked":
         return `${outcome.reason}. ${outcome.hint}`;
+      case "purchase-placeholder":
+        return "In-app checkout isn't live yet — please contact the studio to complete your purchase.";
       case "error":
         return outcome.text;
     }
@@ -258,6 +268,7 @@ function MyClassRow({
 function BrowseClassRow({
   cls,
   canBook,
+  needsPurchase,
   blockedReason,
   blockedHint,
   onAction,
@@ -265,6 +276,13 @@ function BrowseClassRow({
 }: {
   cls: StudioClass;
   canBook: boolean;
+  /**
+   * v0.12.0: when the server says !canBook *and* the reason is credits /
+   * trial / entitlement (not "not_found"), the right member-facing CTA
+   * is "see plans" — not a disabled "Unavailable". Parent derives this
+   * from member.bookingAccess.statusCode.
+   */
+  needsPurchase: boolean;
   blockedReason: string | null;
   blockedHint: string | null;
   onAction: () => void;
@@ -289,11 +307,9 @@ function BrowseClassRow({
       ? "text-white/70"
       : "text-white/50";
 
-  const actionLabel = !canBook
-    ? "Unavailable"
-    : isFull
-      ? "Join waitlist"
-      : "Book";
+  const actionLabel = canBook
+    ? (isFull ? "Join waitlist" : "Book")
+    : (needsPurchase ? "See plans" : "Unavailable");
 
   return (
     <li className="flex flex-col gap-2 rounded border border-white/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -313,14 +329,34 @@ function BrowseClassRow({
         )}
       </div>
       <div className="flex items-center gap-3 shrink-0">
-        <button
-          onClick={onAction}
-          disabled={!canBook || busy}
-          title={!canBook && blockedReason ? blockedReason : undefined}
-          className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/70 hover:text-white hover:border-white/40 disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          {busy ? "…" : actionLabel}
-        </button>
+        {/* v0.12.0: when the member is blocked for purchase reasons,
+            the CTA is a link to the Plans section instead of a
+            disabled Unavailable button. Same server-truth rule — the
+            member still cannot book until they have credits. */}
+        {canBook ? (
+          <button
+            onClick={onAction}
+            disabled={busy}
+            className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/70 hover:text-white hover:border-white/40 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            {busy ? "…" : actionLabel}
+          </button>
+        ) : needsPurchase ? (
+          <a
+            href="#plans"
+            className="rounded border border-amber-400/40 px-2.5 py-1 text-xs text-amber-400/90 hover:text-amber-400 hover:border-amber-400/60"
+          >
+            {actionLabel}
+          </a>
+        ) : (
+          <button
+            disabled
+            title={blockedReason ?? undefined}
+            className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/70 opacity-30 cursor-not-allowed"
+          >
+            {actionLabel}
+          </button>
+        )}
       </div>
     </li>
   );
@@ -397,6 +433,19 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
   const membership = summariseMembership(member);
   const eligibility = decideEligibility(member);
   const firstName = member.name.split(" ")[0];
+
+  // v0.12.0: "no credits" and "member is blocked from the product" are
+  // different things. The server-truth `canBook` stays the authority
+  // for booking; `needsPurchase` is the separate UI concept that drives
+  // the member-facing CTA toward the plans section instead of a
+  // disabled-looking "Unavailable" state. The `not_found` status
+  // deliberately falls through to generic Unavailable — buying
+  // doesn't help if the record isn't there.
+  const needsPurchase =
+    !member.bookingAccess.canBook &&
+    (member.bookingAccess.statusCode === "no_credits" ||
+      member.bookingAccess.statusCode === "trial_used" ||
+      member.bookingAccess.statusCode === "no_entitlement");
 
   // Partition non-completed classes into "mine" vs "browse".
   type MyClassEntry = {
@@ -499,6 +548,17 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
     }
   }
 
+  // v0.12.0 placeholder purchase handler. No billing integration yet —
+  // this surfaces an outcome card that tells the member what happens
+  // next. The purpose is the entry point and product shape; real
+  // checkout is a later release.
+  function handleBuy(plan: PlanOption) {
+    setOutcome({ kind: "purchase-placeholder", planName: plan.name });
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
   return (
     <main className="mx-auto max-w-2xl">
       {/* Greeting */}
@@ -539,6 +599,37 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
       {/* Outcome card (transient) */}
       {outcome && (
         <OutcomeCard outcome={outcome} onDismiss={() => setOutcome(null)} />
+      )}
+
+      {/* v0.12.0 unentitled hero — only visible when the server says
+          the member can't book for credit / trial / entitlement reasons.
+          Not an account block. The member is still welcome in the
+          product — they just need to buy credits or a plan before they
+          can book. Anchors down to #plans. */}
+      {needsPurchase && (
+        <section
+          className="mt-6 rounded border border-amber-400/40 bg-amber-400/5 px-4 py-3"
+          aria-label="Action needed"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs uppercase tracking-wide text-amber-400/80">
+              Get booking again
+            </span>
+          </div>
+          <p className="mt-2 text-sm font-medium text-amber-400">
+            You can still browse and plan your week — booking resumes once
+            you top up.
+          </p>
+          <p className="mt-1 text-xs text-white/60">
+            {member.bookingAccess.reason}. {member.bookingAccess.actionHint}
+          </p>
+          <a
+            href="#plans"
+            className="mt-3 inline-block rounded border border-amber-400/50 px-2.5 py-1 text-xs text-amber-400 hover:text-amber-300 hover:border-amber-400/80"
+          >
+            See plans &darr;
+          </a>
+        </section>
       )}
 
       {/* Your classes */}
@@ -585,6 +676,7 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
                 key={cls.id}
                 cls={cls}
                 canBook={member.bookingAccess.canBook}
+                needsPurchase={needsPurchase}
                 blockedReason={
                   member.bookingAccess.canBook ? null : member.bookingAccess.reason
                 }
@@ -598,6 +690,12 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
           </ul>
         )}
       </section>
+
+      {/* v0.12.0 Plans & credit packs — always visible. For unentitled
+          members this is the onward path from the hero above. For
+          entitled members it sits at the bottom as a quiet reactivation
+          surface when they eventually run out. */}
+      <PlansSection onBuy={handleBuy} />
     </main>
   );
 }
