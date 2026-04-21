@@ -1218,3 +1218,72 @@ BEGIN
   );
 END;
 $$;
+
+-- ═══ sf_apply_purchase — v0.13.0 ══════════════════════════════════════
+-- Atomic idempotent fulfillment for the Stripe Checkout + fake paths.
+-- Full docs: supabase/v0.13.0_migration.sql. This definition is kept
+-- in sync with the migration file so fresh environments rebuilt from
+-- functions.sql match live behaviour.
+CREATE OR REPLACE FUNCTION sf_apply_purchase(
+  p_member_id   uuid,
+  p_plan_id     text,
+  p_plan_type   text,
+  p_plan_name   text,
+  p_credits     integer,
+  p_source      text,
+  p_external_id text
+)
+RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  v_purchase_id  uuid;
+  v_new_credits  integer;
+BEGIN
+  BEGIN
+    INSERT INTO purchases (member_id, plan_id, source, external_id)
+    VALUES (p_member_id, p_plan_id, p_source, p_external_id)
+    RETURNING id INTO v_purchase_id;
+  EXCEPTION WHEN unique_violation THEN
+    RETURN jsonb_build_object(
+      'ok', true,
+      'already_processed', true,
+      'external_id', p_external_id
+    );
+  END;
+
+  IF p_plan_type = 'credit_pack' THEN
+    UPDATE members
+      SET credits_remaining = COALESCE(credits_remaining, 0) + COALESCE(p_credits, 0),
+          plan_type         = 'class_pack',
+          plan_name         = p_plan_name,
+          updated_at        = now()
+      WHERE id = p_member_id
+      RETURNING credits_remaining INTO v_new_credits;
+    RETURN jsonb_build_object(
+      'ok', true,
+      'already_processed', false,
+      'purchase_id', v_purchase_id,
+      'plan_type_applied', 'class_pack',
+      'credits_remaining', v_new_credits,
+      'external_id', p_external_id
+    );
+  ELSIF p_plan_type = 'unlimited' THEN
+    UPDATE members
+      SET plan_type         = 'unlimited',
+          plan_name         = p_plan_name,
+          credits_remaining = NULL,
+          updated_at        = now()
+      WHERE id = p_member_id;
+    RETURN jsonb_build_object(
+      'ok', true,
+      'already_processed', false,
+      'purchase_id', v_purchase_id,
+      'plan_type_applied', 'unlimited',
+      'credits_remaining', NULL,
+      'external_id', p_external_id
+    );
+  ELSE
+    DELETE FROM purchases WHERE id = v_purchase_id;
+    RAISE EXCEPTION 'sf_apply_purchase: unknown plan_type %', p_plan_type;
+  END IF;
+END;
+$$;

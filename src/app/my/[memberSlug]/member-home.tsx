@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMember, useStore } from "@/lib/store";
 import type { StudioClass } from "@/app/app/classes/data";
 import {
@@ -15,7 +15,8 @@ import {
   accessTypeLabel,
   type MembershipTone,
 } from "@/lib/memberships";
-import { PlansSection, type PlanOption } from "./plans-section";
+import { PlansSection } from "./plans-section";
+import { findPlan, type PlanOption } from "@/lib/plans";
 
 /**
  * v0.11.0 Member Home Foundation.
@@ -76,8 +77,20 @@ type Outcome =
       hint: string;
     }
   | {
-      kind: "purchase-placeholder";
+      /** v0.13.0 real purchase completed via Stripe Checkout. */
+      kind: "purchase_success";
       planName: string;
+      creditsRemaining: number | null;
+    }
+  | {
+      /** v0.13.0 fake-mode purchase completed because Stripe isn't configured. */
+      kind: "purchase_fake";
+      planName: string;
+      creditsRemaining: number | null;
+    }
+  | {
+      /** v0.13.0 Stripe Checkout was cancelled by the user. */
+      kind: "purchase_cancelled";
     }
   | {
       kind: "error";
@@ -123,13 +136,15 @@ function OutcomeCard({
     switch (outcome.kind) {
       case "booked":
       case "cancelled":
+      case "purchase_success":
         return { border: "border-green-400/30", text: "text-green-400" };
       case "waitlisted":
       case "already-in":
-        return { border: "border-white/20", text: "text-white/80" };
+      case "purchase_fake":
+        return { border: "border-white/25", text: "text-white/80" };
       case "late-cancel":
       case "blocked":
-      case "purchase-placeholder":
+      case "purchase_cancelled":
         return { border: "border-amber-400/40", text: "text-amber-400" };
       case "error":
         return { border: "border-red-400/40", text: "text-red-400" };
@@ -150,8 +165,12 @@ function OutcomeCard({
         return `Late cancel — ${outcome.className}`;
       case "blocked":
         return `Can't book ${outcome.className}`;
-      case "purchase-placeholder":
-        return `Thanks for choosing ${outcome.planName}`;
+      case "purchase_success":
+        return `Purchase complete — ${outcome.planName}`;
+      case "purchase_fake":
+        return `Test purchase complete — ${outcome.planName}`;
+      case "purchase_cancelled":
+        return "Checkout cancelled";
       case "error":
         return "Something went wrong";
     }
@@ -173,8 +192,16 @@ function OutcomeCard({
         return `${outcome.when} · No credit returned (cancelled after the window)`;
       case "blocked":
         return `${outcome.reason}. ${outcome.hint}`;
-      case "purchase-placeholder":
-        return "In-app checkout isn't live yet — please contact the studio to complete your purchase.";
+      case "purchase_success":
+        return outcome.creditsRemaining !== null
+          ? `Your plan is now active — ${outcome.creditsRemaining} credits available.`
+          : "Your plan is now active — unlimited access.";
+      case "purchase_fake":
+        return outcome.creditsRemaining !== null
+          ? `Stripe not configured — fake entitlement granted. ${outcome.creditsRemaining} credits now available.`
+          : "Stripe not configured — fake unlimited entitlement granted.";
+      case "purchase_cancelled":
+        return "You closed Stripe Checkout before completing payment. No charge was made and your plan is unchanged.";
       case "error":
         return outcome.text;
     }
@@ -400,13 +427,54 @@ function todayLabel(now: Date): string {
 // ── Page ───────────────────────────────────────────────────────────
 export default function MemberHome({ memberSlug }: { memberSlug: string }) {
   const member = useMember(memberSlug);
-  const { classes, bookMember, cancelBooking, hydrated } = useStore();
+  const { classes, bookMember, cancelBooking, refresh, hydrated } = useStore();
   const [busyClassSlug, setBusyClassSlug] = useState<string | null>(null);
+  const [busyPlanId, setBusyPlanId] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
 
   // Today's date, computed once per client mount. Memoized so it
   // doesn't retrigger on every outcome/busy change.
   const today = useMemo(() => todayLabel(new Date()), []);
+
+  // v0.13.0: Stripe Checkout redirects back with ?purchase=success or
+  // ?purchase=cancel. Detect on mount, show the appropriate outcome
+  // card, force a store refresh so the new credits/plan render, and
+  // clean the URL so a page refresh doesn't re-fire the outcome.
+  const purchaseEffectFiredRef = useRef(false);
+  useEffect(() => {
+    if (purchaseEffectFiredRef.current) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const purchase = params.get("purchase");
+    if (!purchase) return;
+
+    purchaseEffectFiredRef.current = true;
+
+    if (purchase === "success") {
+      const planId = params.get("plan") ?? "";
+      const plan = findPlan(planId);
+      if (plan) {
+        // Live credits come in via refresh() — seed the card with
+        // null and update once the store rehydrates. Keeping it
+        // optimistic would risk lying if the webhook hasn't landed.
+        setOutcome({
+          kind: "purchase_success",
+          planName: plan.name,
+          creditsRemaining: null,
+        });
+      }
+      void refresh();
+    } else if (purchase === "cancel") {
+      setOutcome({ kind: "purchase_cancelled" });
+    }
+
+    // Strip purchase query params from the URL so reloading doesn't
+    // re-trigger the outcome.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("purchase");
+    url.searchParams.delete("plan");
+    window.history.replaceState({}, "", url.toString());
+  }, [refresh]);
 
   if (!hydrated) {
     return (
@@ -548,14 +616,91 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
     }
   }
 
-  // v0.12.0 placeholder purchase handler. No billing integration yet —
-  // this surfaces an outcome card that tells the member what happens
-  // next. The purpose is the entry point and product shape; real
-  // checkout is a later release.
-  function handleBuy(plan: PlanOption) {
-    setOutcome({ kind: "purchase-placeholder", planName: plan.name });
-    if (typeof window !== "undefined") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
+  // v0.13.0 real purchase handler.
+  //
+  //   1. POST /api/stripe/create-checkout-session with { memberSlug,
+  //      planId }. The server returns either { mode: "stripe", url }
+  //      (real Stripe test-mode checkout) or { mode: "fake" } (no
+  //      Stripe env configured).
+  //   2. Stripe mode  → redirect the browser to `url`. Stripe sends
+  //      the user back to /my/{slug}?purchase=success&plan={id} once
+  //      payment completes; the effect above renders the outcome.
+  //   3. Fake  mode  → POST /api/dev/fake-purchase with the same
+  //      payload. The endpoint calls the SAME applyPurchase function
+  //      the Stripe webhook uses, grants the entitlement immediately,
+  //      and returns the new credits_remaining. Show the
+  //      purchase_fake outcome card and refresh the store.
+  async function handleBuy(plan: PlanOption) {
+    if (!member || busyPlanId) return;
+    setBusyPlanId(plan.id);
+    setOutcome(null);
+    try {
+      const sessionResp = await fetch("/api/stripe/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberSlug: member.id, planId: plan.id }),
+      });
+      const sessionData = (await sessionResp.json()) as {
+        ok?: boolean;
+        mode?: "stripe" | "fake";
+        url?: string;
+        error?: string;
+      };
+
+      if (!sessionResp.ok || !sessionData.ok) {
+        setOutcome({
+          kind: "error",
+          text: sessionData.error ?? `Checkout create failed (${sessionResp.status})`,
+        });
+        setBusyPlanId(null);
+        return;
+      }
+
+      if (sessionData.mode === "stripe" && sessionData.url) {
+        // Leaving the SPA for Stripe-hosted Checkout. On return, the
+        // ?purchase=success query param effect at the top of this
+        // component will fire.
+        window.location.href = sessionData.url;
+        return;
+      }
+
+      // Fake fallback.
+      const fakeResp = await fetch("/api/dev/fake-purchase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberSlug: member.id, planId: plan.id }),
+      });
+      const fakeData = (await fakeResp.json()) as {
+        ok?: boolean;
+        error?: string;
+        creditsRemaining?: number | null;
+      };
+
+      if (!fakeResp.ok || !fakeData.ok) {
+        setOutcome({
+          kind: "error",
+          text: fakeData.error ?? `Fake purchase failed (${fakeResp.status})`,
+        });
+        setBusyPlanId(null);
+        return;
+      }
+
+      setOutcome({
+        kind: "purchase_fake",
+        planName: plan.name,
+        creditsRemaining: fakeData.creditsRemaining ?? null,
+      });
+      await refresh();
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    } catch (e) {
+      setOutcome({
+        kind: "error",
+        text: e instanceof Error ? e.message : "Checkout failed",
+      });
+    } finally {
+      setBusyPlanId(null);
     }
   }
 
@@ -694,8 +839,10 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
       {/* v0.12.0 Plans & credit packs — always visible. For unentitled
           members this is the onward path from the hero above. For
           entitled members it sits at the bottom as a quiet reactivation
-          surface when they eventually run out. */}
-      <PlansSection onBuy={handleBuy} />
+          surface when they eventually run out. v0.13.0 wires the Buy
+          button to real Stripe Checkout (test mode) or the fake
+          fallback. */}
+      <PlansSection onBuy={handleBuy} busyPlanId={busyPlanId} />
     </main>
   );
 }

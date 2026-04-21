@@ -88,3 +88,20 @@ create table if not exists booking_events (
 
 create index if not exists idx_events_class on booking_events(class_id);
 create index if not exists idx_events_booking on booking_events(booking_id);
+
+-- ═══ PURCHASES — v0.13.0 ══════════════════════════════════════════════
+-- Minimal idempotent log of fulfilled purchases. One row per Stripe
+-- checkout session OR dev-fake purchase. UNIQUE(external_id) is the
+-- idempotency guard used by sf_apply_purchase.
+create table if not exists purchases (
+  id           uuid primary key default gen_random_uuid(),
+  member_id    uuid not null references members(id) on delete cascade,
+  plan_id      text not null,
+  source       text not null check (source in ('stripe','fake')),
+  external_id  text not null,
+  created_at   timestamptz not null default now(),
+  unique (external_id)
+);
+
+create index if not exists idx_purchases_member_created
+  on purchases(member_id, created_at desc);
