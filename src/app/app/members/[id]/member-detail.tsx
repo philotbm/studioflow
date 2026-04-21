@@ -687,8 +687,19 @@ export default function MemberDetail({ id }: { id: string }) {
       </Link>
 
       {/* Current snapshot */}
-      <div className="mt-4">
+      <div className="mt-4 flex items-baseline justify-between gap-3">
         <h1 className="text-2xl font-bold tracking-tight">{member.name}</h1>
+        {/* v0.10.1: internal launcher for the member-facing booking page.
+            This is an operator-only convenience — /book has no public
+            entry point, so operators need a way to reach /book/{slug}
+            while testing. Not a member-visible control. */}
+        <Link
+          href={`/book/${member.id}`}
+          className="text-xs text-white/50 hover:text-white"
+          title="Open this member's personal booking page"
+        >
+          View member booking page &rarr;
+        </Link>
       </div>
 
       {/* v0.9.4 Membership panel — consolidated commercial truth. The
