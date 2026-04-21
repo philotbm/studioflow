@@ -97,17 +97,21 @@ CREATE INDEX IF NOT EXISTS idx_credit_tx_member
 -- Ensure permissive access (project has no auth layer; RLS disabled elsewhere)
 ALTER TABLE credit_transactions DISABLE ROW LEVEL SECURITY;
 
--- ═══ sf_check_eligibility — v0.8.0 update ══════════════════════════════
--- Adds status_code to the JSON result so the UI can switch on a stable key
--- instead of matching on human-readable reason strings. Everything else
--- mirrors src/lib/eligibility.ts v0.6.0 exactly (which was the v0.7.0
--- server port) so there are no behaviour regressions.
+-- ═══ sf_check_eligibility — v0.9.4.1 Booking Truth Simplification ═════
+-- Booking truth for this phase is entitlement only:
+--   unlimited plan                 → can book
+--   positive credits (pack/trial)  → can book
+--   otherwise                      → cannot book
+-- Account status is NOT a StudioFlow product concept at this phase and
+-- is not read here at all. If a lifecycle feature ships later it will
+-- be a deliberate design, not an accidental leak from the members.status
+-- column.
 CREATE OR REPLACE FUNCTION sf_check_eligibility(p_member_id uuid)
 RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
 DECLARE
   v_member RECORD;
 BEGIN
-  SELECT id, status, plan_type, plan_name, credits_remaining
+  SELECT id, plan_type, plan_name, credits_remaining
   INTO v_member FROM members WHERE id = p_member_id;
 
   IF v_member IS NULL THEN
@@ -118,18 +122,6 @@ BEGIN
       'credits_remaining', NULL,
       'action_hint', 'Member record missing',
       'status_code', 'not_found'
-    );
-  END IF;
-
-  -- Account lifecycle: inactive overrides everything
-  IF v_member.status = 'inactive' THEN
-    RETURN jsonb_build_object(
-      'can_book', false,
-      'reason', 'Account inactive',
-      'entitlement_label', 'Inactive account',
-      'credits_remaining', v_member.credits_remaining,
-      'action_hint', 'Reactivate the account to allow booking',
-      'status_code', 'account_inactive'
     );
   END IF;
 

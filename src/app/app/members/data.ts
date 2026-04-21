@@ -77,21 +77,17 @@ export type OpportunitySignal = {
 export type PlanType = "unlimited" | "class_pack" | "trial" | "drop_in";
 
 /**
- * Lifecycle/account status — the raw DB column. Nothing about balance
- * state lives here; balance is `credits` and booking access is
- * `bookingAccess`. These three dimensions are kept deliberately separate
- * after the v0.8.0 status-semantics cleanup.
- */
-export type AccountStatus = "active" | "paused" | "inactive";
-
-/**
  * Stable, machine-readable booking access code from the DB truth source.
  * Exhaustive — any new case must be added to `sf_check_eligibility` in
  * supabase/functions.sql first, then surfaced here.
+ *
+ * v0.9.4.1 Booking Truth Simplification: "account_inactive" removed.
+ * Account lifecycle is not a StudioFlow product concept at this phase
+ * and no longer appears in this union. sf_check_eligibility never emits
+ * it.
  */
 export type BookingAccessStatus =
   | "ok"
-  | "account_inactive"
   | "no_credits"
   | "trial_used"
   | "no_entitlement"
@@ -117,8 +113,6 @@ export type Member = {
   plan: string;
   planType: PlanType;
   credits: number | null;
-  /** Raw lifecycle status from the DB — no balance or entitlement state blended in. */
-  accountStatus: AccountStatus;
   /** Server-truth booking access — derived by sf_check_eligibility, transported via v_members_with_access. */
   bookingAccess: BookingAccess;
   insights: MemberInsights;
