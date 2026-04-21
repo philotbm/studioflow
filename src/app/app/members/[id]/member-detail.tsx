@@ -689,16 +689,16 @@ export default function MemberDetail({ id }: { id: string }) {
       {/* Current snapshot */}
       <div className="mt-4 flex items-baseline justify-between gap-3">
         <h1 className="text-2xl font-bold tracking-tight">{member.name}</h1>
-        {/* v0.10.1: internal launcher for the member-facing booking page.
-            This is an operator-only convenience — /book has no public
-            entry point, so operators need a way to reach /book/{slug}
-            while testing. Not a member-visible control. */}
+        {/* v0.11.0: internal launcher for the member-facing home page
+            (/my/{slug}). Operator-only convenience — /my has no public
+            entry point, so operators need a way to reach any member's
+            home while testing. Not a member-visible control. */}
         <Link
-          href={`/book/${member.id}`}
+          href={`/my/${member.id}`}
           className="text-xs text-white/50 hover:text-white"
-          title="Open this member's personal booking page"
+          title="Open this member's home page"
         >
-          View member booking page &rarr;
+          View member home &rarr;
         </Link>
       </div>
 

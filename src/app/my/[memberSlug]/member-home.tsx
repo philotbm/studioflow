@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMember, useStore } from "@/lib/store";
 import type { StudioClass } from "@/app/app/classes/data";
 import {
@@ -17,20 +17,25 @@ import {
 } from "@/lib/memberships";
 
 /**
- * v0.10.0 member-facing booking home.
+ * v0.11.0 Member Home Foundation.
  *
- * One page per member. Reuses the shared store (bookMember /
- * cancelBooking) so server truth is unchanged — no new rules, no
- * duplicated logic. Shows three surfaces:
+ * A member's landing page. Structured as sections so it can grow into
+ * a proper member app over subsequent releases without re-architecting
+ * the route. For v0.11.0 the sections are:
  *
- *   1. Header: who the member is, what their membership looks like,
- *      how many credits remain.
- *   2. Your upcoming classes: classes the member is in (booked,
- *      checked in, or waitlisted) with a Cancel action when the
- *      class is still upcoming.
- *   3. Browse classes: upcoming classes the member is NOT in, with
- *      Book / Join waitlist / Cannot book (disabled) action depending
- *      on server-derived bookingAccess + class capacity.
+ *   Greeting       — first name + today's date.
+ *   Membership     — plan, access type, credits / pack size, summary.
+ *   Your classes   — upcoming bookings + waitlist entries. Cancel
+ *                    action on upcoming rows, routed through
+ *                    sf_cancel_booking. Late-cancel warning up front.
+ *   Browse classes — other upcoming classes with Book / Join waitlist /
+ *                    Unavailable actions, routed through sf_book_member.
+ *   Outcome card   — persistent, dismissable result of the most recent
+ *                    action.
+ *
+ * No new booking logic. Every mutation goes through the shared store
+ * which calls the exact same sf_* server functions the operator view
+ * uses.
  */
 
 // ── Outcome state ───────────────────────────────────────────────────
@@ -74,7 +79,7 @@ type Outcome =
       text: string;
     };
 
-// ── Tone palette (matches the operator Membership panel palette) ───
+// ── Tone palette (matches the operator Membership panel) ───────────
 const toneText: Record<MembershipTone, string> = {
   positive: "text-green-400",
   neutral: "text-white/60",
@@ -88,8 +93,11 @@ const toneBorder: Record<MembershipTone, string> = {
   blocked: "border-red-400/30",
 };
 
-// ── Status pill for "your upcoming classes" row ────────────────────
-function myStatusLabel(attendeeStatus: string | undefined, waitlistPosition: number | undefined): string {
+// ── Status pill for Your classes row ───────────────────────────────
+function myStatusLabel(
+  attendeeStatus: string | undefined,
+  waitlistPosition: number | undefined,
+): string {
   if (attendeeStatus === "checked_in") return "Checked in";
   if (attendeeStatus === "booked") return "Booked";
   if (attendeeStatus === "no_show") return "No-show";
@@ -152,7 +160,7 @@ function OutcomeCard({
       case "cancelled":
         return outcome.creditRestored
           ? `${outcome.when} · 1 credit restored`
-          : `${outcome.when}`;
+          : outcome.when;
       case "late-cancel":
         return `${outcome.when} · No credit returned (cancelled after the window)`;
       case "blocked":
@@ -203,10 +211,10 @@ function MyClassRow({
     (attendeeStatus === "booked" || waitlistPosition !== undefined);
   const cutoffClosed = cls.cancellationWindowClosed === true;
 
-  // Attendee status colour
   const statusColor = (() => {
     if (attendeeStatus === "checked_in") return "text-green-400";
-    if (attendeeStatus === "no_show" || attendeeStatus === "late_cancel") return "text-red-400";
+    if (attendeeStatus === "no_show" || attendeeStatus === "late_cancel")
+      return "text-red-400";
     if (waitlistPosition !== undefined) return "text-amber-400";
     return "text-white/70";
   })();
@@ -318,12 +326,51 @@ function BrowseClassRow({
   );
 }
 
+// ── Greeting helpers ───────────────────────────────────────────────
+const WEEKDAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+/**
+ * Today in "Monday 21 April" form. Computed once per render on the
+ * client so it reflects the viewer's local weekday. The store already
+ * rerenders on any mutation, so this refreshes naturally without
+ * needing a live clock.
+ */
+function todayLabel(now: Date): string {
+  return `${WEEKDAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]}`;
+}
+
 // ── Page ───────────────────────────────────────────────────────────
 export default function MemberHome({ memberSlug }: { memberSlug: string }) {
   const member = useMember(memberSlug);
   const { classes, bookMember, cancelBooking, hydrated } = useStore();
   const [busyClassSlug, setBusyClassSlug] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+
+  // Today's date, computed once per client mount. Memoized so it
+  // doesn't retrigger on every outcome/busy change.
+  const today = useMemo(() => todayLabel(new Date()), []);
 
   if (!hydrated) {
     return (
@@ -338,10 +385,10 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
       <main className="mx-auto max-w-2xl pt-12 text-center">
         <p className="text-white/60 text-sm">We couldn&apos;t find that member.</p>
         <Link
-          href="/book"
+          href="/"
           className="mt-4 inline-block text-xs text-white/40 hover:text-white/70"
         >
-          ← Back to member picker
+          ← Back home
         </Link>
       </main>
     );
@@ -349,10 +396,9 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
 
   const membership = summariseMembership(member);
   const eligibility = decideEligibility(member);
+  const firstName = member.name.split(" ")[0];
 
-  // Partition all non-completed classes into "mine" vs "browse".
-  // Live classes the member is not in are intentionally excluded from
-  // browse — they can't retro-book a class that's already in progress.
+  // Partition non-completed classes into "mine" vs "browse".
   type MyClassEntry = {
     cls: StudioClass;
     attendeeStatus: string | undefined;
@@ -376,12 +422,12 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
   }
 
   async function handleBook(cls: StudioClass) {
-    if (busyClassSlug) return;
+    if (busyClassSlug || !member) return;
     setBusyClassSlug(cls.id);
     setOutcome(null);
     const when = `${cls.time} · ${cls.instructor}`;
     try {
-      const result = await bookMember(cls.id, memberSlug);
+      const result = await bookMember(cls.id, member.id);
       if (result.status === "blocked") {
         setOutcome({
           kind: "blocked",
@@ -422,17 +468,17 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
   }
 
   async function handleCancel(entry: MyClassEntry) {
-    if (busyClassSlug) return;
+    if (busyClassSlug || !member) return;
     const cls = entry.cls;
     setBusyClassSlug(cls.id);
     setOutcome(null);
     const when = `${cls.time} · ${cls.instructor}`;
     const isWaitlistLeave = entry.waitlistPosition !== undefined;
-    // Predict restoration locally for the outcome copy. Server remains
-    // authoritative; we only use this to shape the success sentence.
+    // Predict restoration locally for the success copy. Server remains
+    // authoritative; we only use this to shape the sentence.
     const predicted = restorationForCancel(membership.accessType, false);
     try {
-      const result = await cancelBooking(cls.id, memberSlug);
+      const result = await cancelBooking(cls.id, member.id);
       if (result.result === "late_cancel") {
         setOutcome({ kind: "late-cancel", className: cls.name, when });
       } else {
@@ -440,8 +486,6 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
           kind: "cancelled",
           className: cls.name,
           when,
-          // Waitlist cancels never restore credit (no credit was taken);
-          // bookings restore per the restorationForCancel rule.
           creditRestored: !isWaitlistLeave && predicted.restoresCredits === 1,
         });
       }
@@ -457,26 +501,22 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
 
   return (
     <main className="mx-auto max-w-2xl">
-      <Link
-        href="/book"
-        className="text-xs text-white/40 hover:text-white/70"
-      >
-        ← Switch member
-      </Link>
-
-      {/* Header */}
-      <div className="mt-3">
-        <h1 className="text-2xl font-bold tracking-tight">
-          Hi {member.name.split(" ")[0]}
+      {/* Greeting */}
+      <div>
+        <p className="text-xs uppercase tracking-wide text-white/40">{today}</p>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight">
+          Hi {firstName}
         </h1>
         <p className="mt-1 text-sm text-white/60">
-          Here are your upcoming classes and what&apos;s available to book.
+          Here&apos;s your membership, your upcoming classes, and what&apos;s
+          available to book today.
         </p>
       </div>
 
-      {/* Membership card (stripped-down operator Membership panel) */}
-      <div
-        className={`mt-4 rounded border px-4 py-3 ${toneBorder[membership.tone]}`}
+      {/* Membership card */}
+      <section
+        className={`mt-6 rounded border px-4 py-3 ${toneBorder[membership.tone]}`}
+        aria-label="Your membership"
       >
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs uppercase tracking-wide text-white/40">
@@ -494,15 +534,15 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
         <p className="mt-1 text-xs text-white/50">
           {consumptionLabel(eligibility)}
         </p>
-      </div>
+      </section>
 
-      {/* Outcome card */}
+      {/* Outcome card (transient) */}
       {outcome && (
         <OutcomeCard outcome={outcome} onDismiss={() => setOutcome(null)} />
       )}
 
-      {/* Your upcoming classes */}
-      <section className="mt-8">
+      {/* Your classes */}
+      <section className="mt-8" aria-label="Your upcoming classes">
         <h2 className="text-sm font-medium text-white/70">
           Your upcoming classes
           <span className="ml-2 text-white/40">{myClasses.length}</span>
@@ -510,7 +550,7 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
         {myClasses.length === 0 ? (
           <p className="mt-3 text-xs text-white/40">
             You don&apos;t have any upcoming classes yet. Browse what&apos;s
-            available below.
+            available below to book.
           </p>
         ) : (
           <ul className="mt-3 flex flex-col gap-2">
@@ -528,8 +568,8 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
         )}
       </section>
 
-      {/* Browse upcoming classes */}
-      <section className="mt-8">
+      {/* Browse classes */}
+      <section className="mt-8" aria-label="Browse classes">
         <h2 className="text-sm font-medium text-white/70">
           Browse classes
           <span className="ml-2 text-white/40">{browseClasses.length}</span>
