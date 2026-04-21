@@ -12,6 +12,11 @@ import type {
   CreditPackPurchase,
 } from "../data";
 import { decideEligibility, consumptionLabel } from "@/lib/eligibility";
+import {
+  summariseMembership,
+  accessTypeLabel,
+  type MembershipTone,
+} from "@/lib/memberships";
 
 // --- Helpers ---
 
@@ -35,6 +40,20 @@ function accountLine(member: Member): { label: string; style: string } {
       return { label: "Inactive", style: "text-red-400" };
   }
 }
+
+// v0.9.4: tone palette shared by the Membership panel.
+const toneText: Record<MembershipTone, string> = {
+  positive: "text-green-400",
+  neutral: "text-white/60",
+  attention: "text-amber-400",
+  blocked: "text-red-400",
+};
+const toneBorder: Record<MembershipTone, string> = {
+  positive: "border-green-400/25",
+  neutral: "border-white/15",
+  attention: "border-amber-400/30",
+  blocked: "border-red-400/30",
+};
 
 const ADJUST_REASON_LABELS: Record<ManualAdjustReason, string> = {
   bereavement: "Bereavement",
@@ -671,6 +690,9 @@ export default function MemberDetail({ id }: { id: string }) {
   // v0.9.0: canonical eligibility decision — adds the consumption
   // expectation (0 or 1 credit) that the server payload doesn't carry.
   const eligibilityDecision = decideEligibility(member);
+  // v0.9.4: consolidated commercial-truth summary. Presentation-only —
+  // the DB remains authoritative for booking gating (see `access` above).
+  const membership = summariseMembership(member);
   const ins = member.insights;
   const pi = member.purchaseInsights;
   const reasons = reliabilityReasons(ins);
@@ -689,22 +711,67 @@ export default function MemberDetail({ id }: { id: string }) {
       {/* Current snapshot */}
       <div className="mt-4">
         <h1 className="text-2xl font-bold tracking-tight">{member.name}</h1>
-        <dl className="mt-3 flex flex-col gap-1.5 text-sm">
-          <div className="flex gap-2">
-            <dt className="text-white/40">Active plan</dt>
-            <dd className="text-white/80">{member.plan}</dd>
+      </div>
+
+      {/* v0.9.4 Membership panel — consolidated commercial truth. The
+          server-derived Booking Access panel below is still the
+          authoritative gate; this panel exists so an operator can answer
+          "what kind of member is this?" in one glance. */}
+      <div
+        className={`mt-4 rounded border px-4 py-3 ${toneBorder[membership.tone]}`}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs uppercase tracking-wide text-white/40">
+            Membership
+          </span>
+          <span
+            className={`rounded-full border px-2 py-0.5 text-[11px] ${toneBorder[membership.tone]} ${toneText[membership.tone]}`}
+          >
+            {accessTypeLabel(membership)}
+          </span>
+        </div>
+        <p className={`mt-2 text-sm font-medium ${toneText[membership.tone]}`}>
+          {membership.summaryLine}
+        </p>
+        <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/50">
+          <div className="flex gap-1.5">
+            <dt className="text-white/30">Plan</dt>
+            <dd>{membership.planName}</dd>
           </div>
-          <div className="flex gap-2">
-            <dt className="text-white/40">Account</dt>
-            <dd className={account.style}>{account.label}</dd>
-          </div>
-          {member.credits !== null && (
-            <div className="flex gap-2">
-              <dt className="text-white/40">Credits</dt>
-              <dd className="text-white/80">{member.credits}</dd>
+          {membership.creditsRemaining !== null && (
+            <div className="flex gap-1.5">
+              <dt className="text-white/30">Credits</dt>
+              <dd>
+                {membership.totalCredits
+                  ? `${membership.creditsRemaining} of ${membership.totalCredits}`
+                  : membership.creditsRemaining}
+              </dd>
             </div>
           )}
+          {membership.startDate && (
+            <div className="flex gap-1.5">
+              <dt className="text-white/30">
+                {membership.planType === "unlimited" ? "Started" : "Purchased"}
+              </dt>
+              <dd>{membership.startDate}</dd>
+            </div>
+          )}
+          {/* v0.9.4 scope correction: account lifecycle is no longer an
+              access-control layer. The label is kept as informational
+              metadata only — rendered in the neutral panel colour so it
+              cannot read as a booking gate. */}
+          <div className="flex gap-1.5">
+            <dt className="text-white/30">Account</dt>
+            <dd className="text-white/50">{account.label}</dd>
+          </div>
         </dl>
+        {membership.restrictionNote && (
+          <p
+            className={`mt-2 text-xs ${toneText[membership.tone]} opacity-90`}
+          >
+            {membership.restrictionNote}
+          </p>
+        )}
       </div>
 
       {/* Booking access — server-derived via v_members_with_access */}

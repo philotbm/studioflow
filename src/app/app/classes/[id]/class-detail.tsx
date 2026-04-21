@@ -14,6 +14,10 @@ import {
   consumedLabel,
   consumptionLabel,
 } from "@/lib/eligibility";
+import {
+  summariseMembership,
+  accessTypeLabel,
+} from "@/lib/memberships";
 
 // ── Canonical attendance status language (v0.8.4) ───────────────────────
 // These labels are the ONLY visible attendance language in the operator
@@ -182,27 +186,46 @@ function AddMemberControl({
         )}
       </div>
 
-      {selectedAccess && selectedMember && (
-        <div
-          className={`text-[11px] ${
-            selectedAccess.canBook ? "text-white/40" : "text-amber-400/80"
-          }`}
-        >
-          {selectedAccess.canBook ? (
-            <>
-              Entitlement: {selectedAccess.entitlementLabel}
-              <span className="ml-1 text-white/30">
-                · {consumptionLabel(decideEligibility(selectedMember))}
+      {selectedAccess && selectedMember && (() => {
+        // v0.9.4: pair the server's booking-gating verdict (`canBook`,
+        // `reason`, `actionHint` — authoritative) with the client-side
+        // commercial summary so the operator sees *both* the rule-level
+        // answer ("Cannot book — no credits") AND the commercial context
+        // ("5-Class Pass · Drained — needs renewal"). The summary is
+        // presentation-only — see src/lib/memberships.ts.
+        const membership = summariseMembership(selectedMember);
+        return (
+          <div
+            className={`rounded border px-2.5 py-1.5 text-[11px] ${
+              selectedAccess.canBook
+                ? "border-white/10 text-white/50"
+                : "border-amber-400/30 text-amber-400/80"
+            }`}
+          >
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="uppercase tracking-wide text-white/30">
+                {accessTypeLabel(membership)}
               </span>
-            </>
-          ) : (
-            <>
-              Cannot book — {selectedAccess.reason}.{" "}
-              <span className="text-white/40">{selectedAccess.actionHint}</span>
-            </>
-          )}
-        </div>
-      )}
+              <span className="text-white/60">{membership.summaryLine}</span>
+            </div>
+            {selectedAccess.canBook ? (
+              <div className="mt-1 text-white/40">
+                Entitlement: {selectedAccess.entitlementLabel}
+                <span className="ml-1 text-white/30">
+                  · {consumptionLabel(decideEligibility(selectedMember))}
+                </span>
+              </div>
+            ) : (
+              <div className="mt-1">
+                <span className="font-medium">
+                  Cannot book — {selectedAccess.reason}.
+                </span>{" "}
+                <span className="text-white/50">{selectedAccess.actionHint}</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
