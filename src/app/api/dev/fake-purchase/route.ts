@@ -5,6 +5,12 @@ import { getSupabaseClient } from "@/lib/supabase";
 /**
  * v0.13.0 DEV-ONLY fallback for when Stripe is not configured.
  *
+ *   ⚠ POST-ONLY. GET returns HTTP 405.
+ *   Called by the member-home Buy button only when the server-side
+ *   /api/stripe/create-checkout-session responded with { mode: "fake" }.
+ *   DO NOT open in a browser; diagnostics live at
+ *   /api/admin/purchase-health instead.
+ *
  * POST /api/dev/fake-purchase
  * Body: { memberSlug: string, planId: string }
  *

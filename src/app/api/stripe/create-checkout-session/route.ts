@@ -4,7 +4,12 @@ import { getSupabaseClient } from "@/lib/supabase";
 import { findPlan } from "@/lib/plans";
 
 /**
- * v0.13.0 POST /api/stripe/create-checkout-session
+ * POST /api/stripe/create-checkout-session
+ *
+ *   ⚠ POST-ONLY. GET returns HTTP 405.
+ *   DO NOT present this as a browser QA URL — use the member-home
+ *   Buy button (which POSTs here) or /api/admin/purchase-health for
+ *   GET-safe diagnostics.
  *
  * Body: { memberSlug: string, planId: string }
  *

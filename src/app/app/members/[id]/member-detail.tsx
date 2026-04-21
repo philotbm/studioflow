@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMember, useStore, formatRelative } from "@/lib/store";
-import type { LedgerEntry, ManualAdjustReason } from "@/lib/db";
+import type { LedgerEntry, ManualAdjustReason, PurchaseRecord } from "@/lib/db";
 import { MANUAL_ADJUST_REASONS } from "@/lib/db";
+import { findPlan } from "@/lib/plans";
 import type {
   Member,
   MemberInsights,
@@ -403,6 +404,78 @@ function RecentLedgerPanel({
               </span>
               <span className="text-[11px] text-white/30">
                 bal {runningBalance} · {formatRelative(new Date(e.createdAt).getTime(), now)}
+              </span>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * v0.13.1 Purchase history panel.
+ *
+ * Reads the v0.13.0 `purchases` table via store.getPurchases. Shows
+ * the latest N rows for this member, newest first. Plan-id is mapped
+ * to display name via findPlan(); unknown ids (stale catalogue) fall
+ * back to the raw id string.
+ *
+ * Read-only. The operator cannot issue refunds or edits from here —
+ * that would need a dedicated flow wired to sf_apply_purchase's
+ * inverse, which is not in scope for v0.13.1.
+ */
+function RecentPurchasesPanel({ memberSlug }: { memberSlug: string }) {
+  const { getPurchases, members } = useStore();
+  const [entries, setEntries] = useState<PurchaseRecord[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPurchases(memberSlug, 10).then((rows) => {
+      if (!cancelled) setEntries(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Re-fetch on members collection change (a completed purchase
+    // triggers a store refresh, which changes `members`, which
+    // re-runs this and picks up the new row).
+  }, [getPurchases, memberSlug, members]);
+
+  if (!entries) return null;
+  if (entries.length === 0) {
+    return (
+      <p className="text-xs text-white/40">
+        No purchases on record for this member.
+      </p>
+    );
+  }
+  const now = Date.now();
+  return (
+    <ul className="flex flex-col gap-2">
+      {entries.map((e) => {
+        const plan = findPlan(e.planId);
+        const planLabel = plan ? plan.name : e.planId;
+        const sourceLabel = e.source === "stripe" ? "Stripe" : "Fake (dev)";
+        const sourceTone =
+          e.source === "stripe" ? "text-green-400/80" : "text-white/40";
+        return (
+          <li
+            key={e.id}
+            className="flex items-center justify-between gap-3 rounded border border-white/10 px-4 py-2"
+          >
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm">{planLabel}</span>
+              <span className="text-[11px] text-white/30 font-mono truncate">
+                {e.externalId}
+              </span>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-0.5">
+              <span className={`text-[11px] ${sourceTone}`}>
+                {sourceLabel}
+              </span>
+              <span className="text-[11px] text-white/30">
+                {formatRelative(new Date(e.createdAt).getTime(), now)}
               </span>
             </div>
           </li>
@@ -843,6 +916,21 @@ export default function MemberDetail({ id }: { id: string }) {
             memberSlug={member.id}
             liveCredits={member.credits}
           />
+        </div>
+      </div>
+
+      {/* v0.13.1 Purchase history — reads the purchases table populated
+          by the shared sf_apply_purchase RPC. Visible to operators
+          only; this surface is /app/members/[id], not the member's
+          own home. */}
+      <div className="mt-6">
+        <h2 className="text-sm font-medium text-white/70">Purchase history</h2>
+        <p className="mt-1 text-xs text-white/40">
+          Every completed purchase (Stripe or dev fake) is logged here.
+          Newest first.
+        </p>
+        <div className="mt-3">
+          <RecentPurchasesPanel memberSlug={member.id} />
         </div>
       </div>
 

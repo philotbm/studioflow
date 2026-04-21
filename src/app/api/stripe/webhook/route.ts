@@ -4,7 +4,12 @@ import { applyPurchase } from "@/lib/entitlements/applyPurchase";
 import { getSupabaseClient } from "@/lib/supabase";
 
 /**
- * v0.13.0 POST /api/stripe/webhook
+ * POST /api/stripe/webhook
+ *
+ *   ⚠ POST-ONLY. GET returns HTTP 405.
+ *   Called ONLY by Stripe's backend with a signed `stripe-signature`
+ *   header. DO NOT open in a browser; diagnostics for the purchase
+ *   path live at /api/admin/purchase-health instead.
  *
  * Single event handled: `checkout.session.completed`.
  *

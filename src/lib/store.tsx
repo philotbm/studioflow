@@ -22,11 +22,13 @@ import {
   checkInAttendee as dbCheckIn,
   adjustMemberCredit as dbAdjust,
   fetchRecentLedgerEntries as dbLedger,
+  fetchMemberPurchases as dbPurchases,
   markAttendance as dbMarkAttendance,
   checkInMember as dbCheckInMember,
   finaliseClass as dbFinaliseClass,
   type AuditEvent,
   type LedgerEntry,
+  type PurchaseRecord,
   type AdjustCreditResult,
   type ManualAdjustReason,
   type AttendanceOutcome,
@@ -93,6 +95,8 @@ type StoreContextValue = {
   ) => Promise<AdjustCreditResult>;
   /** Fetch recent credit-ledger rows for a member (v0.8.0). */
   getLedger: (memberSlug: string, limit?: number) => Promise<LedgerEntry[]>;
+  /** v0.13.1: recent purchases for a member, newest-first. Reads the v0.13.0 `purchases` table. */
+  getPurchases: (memberSlug: string, limit?: number) => Promise<PurchaseRecord[]>;
   /** v0.8.3: attendance correction (checked_in / no_show / booked). */
   markAttendance: (
     classSlug: string,
@@ -220,6 +224,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const getPurchases = useCallback(
+    (memberSlug: string, limit?: number) => dbPurchases(memberSlug, limit),
+    [],
+  );
+
   const doMarkAttendance = useCallback(
     async (
       classSlug: string,
@@ -299,6 +308,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       checkInAttendee: doCheckIn,
       adjustCredit: doAdjust,
       getLedger,
+      getPurchases,
       markAttendance: doMarkAttendance,
       checkInMember: doCheckInMember,
       finaliseClass: doFinaliseClass,
@@ -308,7 +318,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       classes, members, loading, error, hydrated,
       getClass, getMember, getAuditEvents,
       doBook, doCancel, promoteEntry, doUnpromote, doCheckIn,
-      doAdjust, getLedger, doMarkAttendance,
+      doAdjust, getLedger, getPurchases, doMarkAttendance,
       doCheckInMember, doFinaliseClass, loadData,
     ],
   );
