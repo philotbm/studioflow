@@ -107,7 +107,7 @@ RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
 DECLARE
   v_member RECORD;
 BEGIN
-  SELECT id, status, plan_type, plan_name, credits_remaining
+  SELECT id, plan_type, plan_name, credits_remaining
   INTO v_member FROM members WHERE id = p_member_id;
 
   IF v_member IS NULL THEN
@@ -121,17 +121,12 @@ BEGIN
     );
   END IF;
 
-  -- Account lifecycle: inactive overrides everything
-  IF v_member.status = 'inactive' THEN
-    RETURN jsonb_build_object(
-      'can_book', false,
-      'reason', 'Account inactive',
-      'entitlement_label', 'Inactive account',
-      'credits_remaining', v_member.credits_remaining,
-      'action_hint', 'Reactivate the account to allow booking',
-      'status_code', 'account_inactive'
-    );
-  END IF;
+  -- v0.9.4 scope correction: account lifecycle does NOT gate booking.
+  -- The Memberships / Packs Foundation release is deliberately narrowed
+  -- to entitlement truth only — unlimited OR positive credits → bookable.
+  -- Account status (active/paused/inactive) becomes informational metadata
+  -- here, not an access control. If a lifecycle gate is needed later it
+  -- belongs in a dedicated Account Status release, not in this one.
 
   -- Unlimited
   IF v_member.plan_type = 'unlimited' THEN

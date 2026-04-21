@@ -3,12 +3,50 @@
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import type { Member } from "./data";
+import {
+  summariseMembership,
+  shortStatusLabel,
+  accessTypeLabel,
+  type MembershipTone,
+} from "@/lib/memberships";
 
-function creditDisplay(member: Member) {
-  if (member.credits === null) return { text: "Unlimited", style: "text-green-400" };
-  if (member.credits === 0) return { text: "No credits", style: "text-red-400" };
-  if (member.credits === 1) return { text: "1 credit left", style: "text-amber-400" };
-  return { text: `${member.credits} credits`, style: "text-white/50" };
+const toneColor: Record<MembershipTone, string> = {
+  positive: "text-green-400",
+  neutral: "text-white/50",
+  attention: "text-amber-400",
+  blocked: "text-red-400",
+};
+
+const toneBorder: Record<MembershipTone, string> = {
+  positive: "border-green-400/20",
+  neutral: "border-white/10",
+  attention: "border-amber-400/30",
+  blocked: "border-red-400/30",
+};
+
+function MemberRow({ m }: { m: Member }) {
+  const summary = summariseMembership(m);
+  const short = shortStatusLabel(summary);
+  const accessLabel = accessTypeLabel(summary);
+  return (
+    <Link
+      href={`/app/members/${m.id}`}
+      className="flex flex-col gap-1.5 rounded-lg border border-white/10 px-4 py-3 hover:border-white/25 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-sm font-medium">{m.name}</span>
+        <span className="text-xs text-white/50">{m.plan}</span>
+      </div>
+      <div className="flex items-center gap-2 sm:shrink-0">
+        <span
+          className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${toneBorder[summary.tone]} ${toneColor[summary.tone]}`}
+        >
+          {accessLabel}
+        </span>
+        <span className={`text-xs ${toneColor[summary.tone]}`}>{short}</span>
+      </div>
+    </Link>
+  );
 }
 
 export default function MembersPage() {
@@ -40,26 +78,17 @@ export default function MembersPage() {
         </button>
       </div>
 
+      <p className="mt-2 text-xs text-white/40">
+        Access type and credit state are derived from each member&apos;s current
+        plan. The dot next to the plan pill reflects booking eligibility.
+      </p>
+
       <ul className="mt-6 flex flex-col gap-3">
-        {members.map((m) => {
-          const credit = creditDisplay(m);
-          return (
-            <li key={m.id}>
-              <Link
-                href={`/app/members/${m.id}`}
-                className="flex flex-col gap-1 rounded-lg border border-white/10 px-4 py-3 hover:border-white/25 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium">{m.name}</span>
-                  <span className="text-xs text-white/50">{m.plan}</span>
-                </div>
-                <span className={`mt-1 text-xs sm:mt-0 ${credit.style}`}>
-                  {credit.text}
-                </span>
-              </Link>
-            </li>
-          );
-        })}
+        {members.map((m) => (
+          <li key={m.id}>
+            <MemberRow m={m} />
+          </li>
+        ))}
       </ul>
     </main>
   );
