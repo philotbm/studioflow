@@ -660,45 +660,117 @@ function ActiveEntitlementCard({ member }: { member: Member }) {
 }
 
 /**
- * v0.13.2 opportunity-signal filter. Seed JSON signals are advisory
- * text written at seed time; after a purchase they can contradict
- * live state. Hide any signal whose text is factually wrong against
- * the current live entitlement. Signals that still make sense
- * (reliability, attendance, under-using unlimited while still
- * unlimited, etc.) pass through unchanged.
+ * v0.13.4 opportunity-signal filter. Seed JSON signals are advisory
+ * text written at seed time; after a purchase or upgrade they can
+ * contradict live state. The filter strips or drops any signal whose
+ * text is factually wrong against the current live entitlement.
+ *
+ * v0.13.2 established the baseline (repurchase/drained/upgrade rules).
+ * v0.13.4 adds plan-aware hardening for unlimited members: any
+ * credit-pack-economics phrase is a contradiction when the plan has no
+ * credit concept. If the invalid phrase sits in one clause of a
+ * multi-clause detail (e.g. "Late cancel history and low remaining
+ * credits"), the truthful clause is preserved and the invalid clause
+ * is stripped. If the label itself encodes credit-pack economics or
+ * nothing salvageable remains in the detail, the whole signal is
+ * dropped.
  */
+const CREDIT_PACK_ECONOMICS_PHRASES = [
+  "low remaining credits",
+  "low credits",
+  "remaining credits",
+  "out of credits",
+  "running low",
+  "final class",
+  "final class on pack",
+  "last class on pack",
+  "last credit",
+  "final credit",
+  "down to 1 credit",
+  "down to one credit",
+  "down to her last",
+  "down to his last",
+  "down to their last",
+  "repurchase",
+  "ready for another pack",
+  "another pack",
+  "pack renewal",
+  "pack expiry",
+  "renewal offer",
+  "prompt with renewal",
+  "drained",
+  "fully consumed",
+];
+
+function mentionsCreditPackEconomics(lowerText: string): boolean {
+  return CREDIT_PACK_ECONOMICS_PHRASES.some((p) => lowerText.includes(p));
+}
+
+/**
+ * Split a signal detail on light conjunctions (" and ", "; ") and drop
+ * any clause that references credit-pack economics. Returns null when
+ * nothing truthful remains, in which case the whole signal should be
+ * dropped by the caller.
+ */
+function stripCreditPackClauses(detail: string): string | null {
+  const parts = detail.split(/\s+(?:and|;)\s+/i);
+  const kept = parts
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0 && !mentionsCreditPackEconomics(p.toLowerCase()));
+  if (kept.length === 0) return null;
+  return kept.join(" and ");
+}
+
 function filterOpportunitySignals(
   signals: OpportunitySignal[],
   member: Member,
 ): OpportunitySignal[] {
   const canBook = member.bookingAccess.canBook;
   const isUnlimited = member.planType === "unlimited";
-  return signals.filter((s) => {
+  const result: OpportunitySignal[] = [];
+  for (const s of signals) {
     const text = `${s.label} ${s.detail}`.toLowerCase();
+    const labelLower = s.label.toLowerCase();
 
-    // Hide "sell them another pack" / "drained" copy when live state
-    // says the member is bookable — the nudge is factually wrong.
+    // v0.13.2: "sell them another pack" / "drained" copy is wrong when
+    // live state says the member is bookable.
     const mentionsRepurchase =
       text.includes("repurchase") ||
       text.includes("ready for another pack") ||
       text.includes("drained") ||
       text.includes("fully consumed") ||
       text.includes("likely to repurchase");
-    if (mentionsRepurchase && canBook) return false;
+    if (mentionsRepurchase && canBook) continue;
 
-    // Hide "upgrade candidate → unlimited" suggestions once the
-    // member already is unlimited.
+    // v0.13.2: upgrade-to-unlimited suggestion once the member already
+    // is unlimited.
     const suggestsUnlimitedUpgrade =
       text.includes("upgrade candidate") ||
       text.includes("unlimited would suit");
-    if (suggestsUnlimitedUpgrade && isUnlimited) return false;
+    if (suggestsUnlimitedUpgrade && isUnlimited) continue;
 
-    // Hide "under-using unlimited" if the member no longer has
+    // v0.13.2: under-using unlimited once the member no longer has
     // unlimited.
-    if (text.includes("under-using unlimited") && !isUnlimited) return false;
+    if (text.includes("under-using unlimited") && !isUnlimited) continue;
 
-    return true;
-  });
+    // v0.13.4: unlimited members have no credit concept. Any phrase
+    // that talks credit-pack economics is a contradiction. Prefer to
+    // strip the invalid clause and keep the truthful part (attendance,
+    // churn risk, etc.); drop the whole signal when the label itself
+    // is credit-pack-coded or nothing truthful survives.
+    if (isUnlimited && mentionsCreditPackEconomics(text)) {
+      if (mentionsCreditPackEconomics(labelLower)) continue;
+      const rewrittenDetail = stripCreditPackClauses(s.detail);
+      if (!rewrittenDetail) continue;
+      if (rewrittenDetail !== s.detail) {
+        result.push({ ...s, detail: rewrittenDetail });
+        continue;
+      }
+    }
+
+    result.push(s);
+  }
+  return result;
 }
 
 export default function MemberDetail({ id }: { id: string }) {
