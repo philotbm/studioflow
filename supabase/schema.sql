@@ -105,3 +105,26 @@ create table if not exists purchases (
 
 create index if not exists idx_purchases_member_created
   on purchases(member_id, created_at desc);
+
+-- ═══ PLANS — v0.14.0 ══════════════════════════════════════════════════
+-- Canonical plan catalogue. Rows here are the source of truth for what
+-- can be purchased and what entitlement a purchase grants. Business
+-- logic (applyPurchase, create-checkout-session) reads from here; the
+-- `purchases.plan_id` text column references a row here by id.
+--
+-- A class_pack plan MUST carry credits > 0; an unlimited plan MUST have
+-- credits NULL. This pairing is enforced at the DB so a typo in the
+-- admin UI cannot create a plan that applyPurchase can't fulfil.
+create table if not exists plans (
+  id           text primary key,
+  name         text not null,
+  type         text not null check (type in ('class_pack','unlimited')),
+  price_cents  integer not null check (price_cents >= 0),
+  credits      integer check (credits is null or credits > 0),
+  created_at   timestamptz not null default now(),
+  constraint plans_type_credits_coherent check (
+    (type = 'class_pack' and credits is not null)
+    or
+    (type = 'unlimited' and credits is null)
+  )
+);

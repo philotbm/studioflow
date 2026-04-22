@@ -7,7 +7,7 @@ import type {
 } from "@/app/app/members/data";
 import type { EntitlementSource } from "@/lib/eligibility";
 import { entitlementSourceFor } from "@/lib/eligibility";
-import { PLAN_OPTIONS } from "@/lib/plans";
+import type { Plan } from "@/lib/plans";
 
 /**
  * v0.9.4 Memberships / Packs Foundation — presentation-only.
@@ -114,28 +114,30 @@ function activeCreditPack(member: Member): CreditPackPurchase | null {
 }
 
 /**
- * v0.13.3 safe pack-size derivation.
+ * v0.14.0 pack-size derivation.
  *
- * The prior rule used the seed-time `purchase_insights_json.activePlan
- * .totalCredits` verbatim, which drifted out of sync the moment a
- * member bought a bigger pack — e.g. a seeded 5-Class Pass member who
- * bought a 10-Class Pass ended up showing "10 of 5 credits left".
+ * The plan catalogue is now the DB `plans` table (v0.14.0). Callers
+ * pass the hydrated catalogue (from the client store, or a server-side
+ * fetch) so this helper stays a pure derivation with no side-effects.
  *
- * The new rule matches the CURRENT `plan_name` against the central
- * plan catalogue (src/lib/plans.ts) and returns the matched pack size
- * ONLY when the live credit balance fits inside it. If balance exceeds
- * the pack (e.g. manual operator adjustments, unusual top-ups), we
- * return `null` so the UI falls back to the neutral "X credits left"
- * copy rather than mathematically impossible "X of Y" wording.
+ * Rule: match the member's current `plan_name` against the catalogue
+ * and return the matched pack's `credits` ONLY when the live balance
+ * fits inside it. If balance exceeds the pack (manual adjustments,
+ * unusual top-ups), return null so the UI falls back to neutral
+ * "X credits left" copy rather than "X of Y" with X > Y (the v0.13.3
+ * bug this guard was originally introduced to fix).
  */
-function derivePackSize(member: Member): number | null {
+function derivePackSize(
+  member: Member,
+  plans: ReadonlyArray<Plan>,
+): number | null {
   if (member.planType !== "class_pack" && member.planType !== "trial") {
     return null;
   }
   const credits = member.credits;
   if (credits === null) return null;
-  const plan = PLAN_OPTIONS.find((p) => p.name === member.plan);
-  if (plan?.credits === undefined) return null;
+  const plan = plans.find((p) => p.name === member.plan);
+  if (plan?.credits == null) return null;
   if (credits > plan.credits) return null;
   return plan.credits;
 }
@@ -243,17 +245,19 @@ function toneFor(status: MembershipStatus): MembershipTone {
  * projection only — it deliberately carries no bookability field so it
  * cannot be confused with or override the server's can_book verdict.
  */
-export function summariseMembership(member: Member): MembershipSummary {
+export function summariseMembership(
+  member: Member,
+  plans: ReadonlyArray<Plan>,
+): MembershipSummary {
   const status = deriveStatus(member);
   const unlimited = activeUnlimited(member);
   const pack = activeCreditPack(member);
   const startDate = unlimited?.startDate ?? pack?.purchaseDate ?? null;
-  // v0.13.3: derive pack size from the plan catalogue + live balance
-  // guard (see derivePackSize). This is the ONLY source the public
-  // `totalCredits` field and composeSummary's "X of Y" phrase read
-  // from — seed `pack.totalCredits` is no longer trusted because it
-  // drifts after a purchase.
-  const packSize = derivePackSize(member);
+  // v0.14.0: derive pack size from the DB plan catalogue (hydrated by
+  // the caller) + live balance guard. Seed `pack.totalCredits` is still
+  // not trusted for the "X of Y" phrase because it drifts after a
+  // purchase; the DB plans table is the single source of truth.
+  const packSize = derivePackSize(member, plans);
 
   return {
     planName: member.plan,

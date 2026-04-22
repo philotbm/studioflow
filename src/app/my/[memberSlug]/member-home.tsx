@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMember, useStore } from "@/lib/store";
+import { useMember, useStore, usePlans } from "@/lib/store";
 import type { StudioClass } from "@/app/app/classes/data";
 import {
   decideEligibility,
@@ -16,7 +16,7 @@ import {
   type MembershipTone,
 } from "@/lib/memberships";
 import { PlansSection } from "./plans-section";
-import { findPlan, type PlanOption } from "@/lib/plans";
+import { findPlan, type Plan } from "@/lib/plans";
 
 /**
  * v0.11.0 Member Home Foundation.
@@ -427,6 +427,7 @@ function todayLabel(now: Date): string {
 // ── Page ───────────────────────────────────────────────────────────
 export default function MemberHome({ memberSlug }: { memberSlug: string }) {
   const member = useMember(memberSlug);
+  const plans = usePlans();
   const { classes, bookMember, cancelBooking, refresh, hydrated } = useStore();
   const [busyClassSlug, setBusyClassSlug] = useState<string | null>(null);
   const [busyPlanId, setBusyPlanId] = useState<string | null>(null);
@@ -452,7 +453,7 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
 
     if (purchase === "success") {
       const planId = params.get("plan") ?? "";
-      const plan = findPlan(planId);
+      const plan = findPlan(planId, plans);
       if (plan) {
         // Live credits come in via refresh() — seed the card with
         // null and update once the store rehydrates. Keeping it
@@ -474,7 +475,7 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
     url.searchParams.delete("purchase");
     url.searchParams.delete("plan");
     window.history.replaceState({}, "", url.toString());
-  }, [refresh]);
+  }, [refresh, plans]);
 
   if (!hydrated) {
     return (
@@ -498,7 +499,7 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
     );
   }
 
-  const membership = summariseMembership(member);
+  const membership = summariseMembership(member, plans);
   const eligibility = decideEligibility(member);
   const firstName = member.name.split(" ")[0];
 
@@ -682,7 +683,7 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
   //      the Stripe webhook uses, grants the entitlement immediately,
   //      and returns the new credits_remaining. Show the
   //      purchase_fake outcome card and refresh the store.
-  async function handleBuy(plan: PlanOption) {
+  async function handleBuy(plan: Plan) {
     if (!member || busyPlanId) return;
     setBusyPlanId(plan.id);
     setOutcome(null);
@@ -944,7 +945,7 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
           surface when they eventually run out. v0.13.0 wires the Buy
           button to real Stripe Checkout (test mode) or the fake
           fallback. */}
-      <PlansSection onBuy={handleBuy} busyPlanId={busyPlanId} />
+      <PlansSection plans={plans} onBuy={handleBuy} busyPlanId={busyPlanId} />
     </main>
   );
 }

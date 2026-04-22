@@ -11,9 +11,11 @@ import {
 } from "react";
 import type { StudioClass } from "@/app/app/classes/data";
 import type { Member, BookingAccess } from "@/app/app/members/data";
+import type { Plan } from "@/lib/plans";
 import {
   fetchAllClasses,
   fetchAllMembers,
+  fetchAllPlans,
   fetchBookingEventsForClass,
   bookMemberIntoClass as dbBook,
   cancelBooking as dbCancel,
@@ -67,6 +69,8 @@ export type BookMemberResult =
 type StoreContextValue = {
   classes: StudioClass[];
   members: Member[];
+  /** v0.14.0: plan catalogue slice — hydrated from the `plans` table. */
+  plans: Plan[];
   loading: boolean;
   error: string | null;
   hydrated: boolean;
@@ -121,18 +125,21 @@ const StoreContext = createContext<StoreContextValue | null>(null);
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [classes, setClasses] = useState<StudioClass[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
-      const [cls, mem] = await Promise.all([
+      const [cls, mem, pls] = await Promise.all([
         fetchAllClasses(),
         fetchAllMembers(),
+        fetchAllPlans(),
       ]);
       setClasses(cls);
       setMembers(mem);
+      setPlans(pls);
       setError(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load data";
@@ -295,6 +302,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     () => ({
       classes,
       members,
+      plans,
       loading,
       error,
       hydrated,
@@ -315,7 +323,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       refresh: loadData,
     }),
     [
-      classes, members, loading, error, hydrated,
+      classes, members, plans, loading, error, hydrated,
       getClass, getMember, getAuditEvents,
       doBook, doCancel, promoteEntry, doUnpromote, doCheckIn,
       doAdjust, getLedger, getPurchases, doMarkAttendance,
@@ -347,4 +355,8 @@ export function useMembers(): Member[] {
 
 export function useMember(slug: string): Member | undefined {
   return useStore().getMember(slug);
+}
+
+export function usePlans(): Plan[] {
+  return useStore().plans;
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useStore, formatRelative } from "@/lib/store";
+import { useStore, usePlans, formatRelative } from "@/lib/store";
 import type { Attendee, WaitlistEntry, Lifecycle } from "../data";
 import { qaFixtureFor, type AuditEvent } from "@/lib/db";
 import { waitlistSignalsFor, type WaitlistSignal } from "../signals";
@@ -68,6 +68,7 @@ function AddMemberControl({
   existingMemberIds: Set<string>;
 }) {
   const { members, bookMember } = useStore();
+  const plans = usePlans();
   const [selectedSlug, setSelectedSlug] = useState("");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<AddFeedback | null>(null);
@@ -193,7 +194,7 @@ function AddMemberControl({
         // answer ("Cannot book — no credits") AND the commercial context
         // ("5-Class Pass · Drained — needs renewal"). The summary is
         // presentation-only — see src/lib/memberships.ts.
-        const membership = summariseMembership(selectedMember);
+        const membership = summariseMembership(selectedMember, plans);
         return (
           <div
             className={`rounded border px-2.5 py-1.5 text-[11px] ${

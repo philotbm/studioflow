@@ -1,17 +1,16 @@
 import { getSupabaseClient } from "@/lib/supabase";
-import { findPlan, type PlanOption } from "@/lib/plans";
+import { fetchPlanById } from "@/lib/plans-db";
 
 /**
- * v0.13.0 shared fulfillment entry point.
+ * v0.14.0 shared fulfillment entry point.
  *
  * Both /api/stripe/webhook (real checkout) and /api/dev/fake-purchase
- * (dev fallback) call this function. Booking rules are NOT touched;
- * this only handles the ONE-WAY mutation from "purchase succeeded →
- * entitlement granted".
+ * (dev fallback) call this function. Plan metadata is resolved from
+ * the DB `plans` table — the in-code catalogue was removed in v0.14.0.
  *
  * Idempotency is enforced server-side via the UNIQUE(external_id)
- * constraint on the `purchases` table (see supabase/v0.13.0_migration
- * .sql). A repeat call with the same externalId is a no-op.
+ * constraint on the `purchases` table. A repeat call with the same
+ * externalId is a no-op.
  *
  * Concurrency: the members UPDATE runs inside the Postgres function
  * sf_apply_purchase with `credits_remaining = COALESCE(...) + p_credits`,
@@ -51,7 +50,8 @@ export type ApplyPurchaseResult = ApplyPurchaseOk | ApplyPurchaseErr;
 export async function applyPurchase(
   input: ApplyPurchaseInput,
 ): Promise<ApplyPurchaseResult> {
-  const plan: PlanOption | undefined = findPlan(input.planId);
+  // v0.14.0: resolve plan metadata from DB. No hardcoded catalogue.
+  const plan = await fetchPlanById(input.planId);
   if (!plan) {
     return {
       ok: false,
