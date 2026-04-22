@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useMember, useStore, formatRelative } from "@/lib/store";
+import { useMember, useStore, usePlans, formatRelative } from "@/lib/store";
 import type { LedgerEntry, ManualAdjustReason, PurchaseRecord } from "@/lib/db";
 import { MANUAL_ADJUST_REASONS } from "@/lib/db";
-import { findPlan, PLAN_OPTIONS } from "@/lib/plans";
+import { findPlan, type Plan } from "@/lib/plans";
 import type {
   Member,
   MemberInsights,
@@ -424,7 +424,13 @@ function RecentLedgerPanel({
  * that would need a dedicated flow wired to sf_apply_purchase's
  * inverse, which is not in scope for v0.13.1.
  */
-function RecentPurchasesPanel({ memberSlug }: { memberSlug: string }) {
+function RecentPurchasesPanel({
+  memberSlug,
+  plans,
+}: {
+  memberSlug: string;
+  plans: Plan[];
+}) {
   const { getPurchases, members } = useStore();
   const [entries, setEntries] = useState<PurchaseRecord[] | null>(null);
 
@@ -453,7 +459,7 @@ function RecentPurchasesPanel({ memberSlug }: { memberSlug: string }) {
   return (
     <ul className="flex flex-col gap-2">
       {entries.map((e) => {
-        const plan = findPlan(e.planId);
+        const plan = findPlan(e.planId, plans);
         const planLabel = plan ? plan.name : e.planId;
         const sourceLabel = e.source === "stripe" ? "Stripe" : "Fake (dev)";
         const sourceTone =
@@ -580,8 +586,14 @@ const eventLabel: Record<string, string> = {
  * size is known AND the live balance fits inside it), and the server's
  * bookability verdict.
  */
-function ActiveEntitlementCard({ member }: { member: Member }) {
-  const summary = summariseMembership(member);
+function ActiveEntitlementCard({
+  member,
+  plans,
+}: {
+  member: Member;
+  plans: Plan[];
+}) {
+  const summary = summariseMembership(member, plans);
   const isActive = member.bookingAccess.canBook;
 
   const statusPill = (() => {
@@ -775,6 +787,7 @@ function filterOpportunitySignals(
 
 export default function MemberDetail({ id }: { id: string }) {
   const member = useMember(id);
+  const plans = usePlans();
 
   if (!member) {
     return (
@@ -788,9 +801,10 @@ export default function MemberDetail({ id }: { id: string }) {
   // v0.9.0: canonical eligibility decision — adds the consumption
   // expectation (0 or 1 credit) that the server payload doesn't carry.
   const eligibilityDecision = decideEligibility(member);
-  // v0.9.4: consolidated commercial-truth summary. Presentation-only —
+  // v0.14.0: consolidated commercial-truth summary reads the DB plan
+  // catalogue (`plans`) for pack-size derivation. Presentation-only —
   // the DB remains authoritative for booking gating (see `access` above).
-  const membership = summariseMembership(member);
+  const membership = summariseMembership(member, plans);
   const ins = member.insights;
   // v0.13.2: purchase_insights_json is no longer rendered directly on
   // this page — the Active entitlement card derives from live DB state
@@ -982,7 +996,7 @@ export default function MemberDetail({ id }: { id: string }) {
           Newest first.
         </p>
         <div className="mt-3">
-          <RecentPurchasesPanel memberSlug={member.id} />
+          <RecentPurchasesPanel memberSlug={member.id} plans={plans} />
         </div>
       </div>
 
@@ -1136,7 +1150,7 @@ export default function MemberDetail({ id }: { id: string }) {
           balance. Updates on every purchase, adjustment, or booking.
         </p>
         <div className="mt-3">
-          <ActiveEntitlementCard member={member} />
+          <ActiveEntitlementCard member={member} plans={plans} />
         </div>
       </div>
 

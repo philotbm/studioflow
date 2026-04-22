@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { getSupabaseClient } from "@/lib/supabase";
-import { findPlan } from "@/lib/plans";
+import { fetchPlanById } from "@/lib/plans-db";
+import { planDescription } from "@/lib/plans";
 
 /**
  * POST /api/stripe/create-checkout-session
@@ -14,7 +15,7 @@ import { findPlan } from "@/lib/plans";
  * Body: { memberSlug: string, planId: string }
  *
  * Flow:
- *   1. Validate body + resolve plan from PLAN_OPTIONS.
+ *   1. Validate body + resolve plan from the DB `plans` table.
  *   2. Resolve member by slug. 404 if missing.
  *   3. If STRIPE_SECRET_KEY present → create a test-mode Stripe
  *      Checkout Session with price_data line item + metadata
@@ -40,7 +41,7 @@ export async function POST(req: Request) {
   }
   const { memberSlug, planId } = body;
 
-  const plan = findPlan(planId);
+  const plan = await fetchPlanById(planId);
   if (!plan) {
     return NextResponse.json(
       { ok: false, error: `Unknown plan: ${planId}` },
@@ -90,10 +91,10 @@ export async function POST(req: Request) {
           quantity: 1,
           price_data: {
             currency: "eur",
-            unit_amount: plan.price ?? 5000,
+            unit_amount: plan.priceCents,
             product_data: {
               name: plan.name,
-              description: plan.description,
+              description: planDescription(plan),
             },
           },
         },

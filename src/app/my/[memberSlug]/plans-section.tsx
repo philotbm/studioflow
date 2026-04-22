@@ -1,38 +1,54 @@
 "use client";
 
-import { PLAN_OPTIONS, type PlanOption } from "@/lib/plans";
+import { type Plan, formatPriceEur } from "@/lib/plans";
 
 /**
- * v0.13.0 Plans & credit packs section.
+ * v0.14.0 Plans & credit packs section.
  *
- * Reads PLAN_OPTIONS from the central catalogue in src/lib/plans.ts.
- * The parent (MemberHome) handles the Buy click by kicking off the
- * real purchase flow in src/app/api/stripe/create-checkout-session —
- * which either redirects to Stripe Checkout (real) or returns a fake
- * mode signal that the parent then follows up with a call to
- * /api/dev/fake-purchase.
+ * Consumes the plans array the parent (MemberHome) pulls from the
+ * client store, which in turn hydrates from the `plans` DB table. No
+ * hardcoded catalogue. The parent handles the Buy click by calling
+ * /api/stripe/create-checkout-session; that route resolves the plan
+ * from the DB, not from an in-memory constant.
  *
- * This component is presentation-only; it does not know whether
- * Stripe is configured.
+ * Presentation-only. The old free-text `headline` / `description`
+ * fields from the pre-v0.14 constant array don't exist on the DB row,
+ * so we render a short derived tagline from type + credits + price
+ * instead. Keeps the card compact and factual.
  */
 
-export type { PlanOption };
-
 export function PlansSection({
+  plans,
   onBuy,
   highlighted,
   busyPlanId,
 }: {
-  onBuy: (plan: PlanOption) => void;
+  plans: Plan[];
+  onBuy: (plan: Plan) => void;
   /**
    * Optional plan id to visually emphasise — used by MemberHome to
-   * draw attention to a specific card after a failed booking, or when
-   * surfacing the section from the no-credits banner. Purely cosmetic.
+   * draw attention to a specific card after a failed booking. Cosmetic.
    */
   highlighted?: string;
   /** Plan id currently processing a Buy click — disables that card. */
   busyPlanId?: string | null;
 }) {
+  if (plans.length === 0) {
+    return (
+      <section
+        id="plans"
+        className="mt-10 scroll-mt-8"
+        aria-label="Plans and credit packs"
+      >
+        <h2 className="text-sm font-medium text-white/70">
+          Plans & credit packs
+        </h2>
+        <p className="mt-1 text-xs text-white/40">
+          No plans are available yet. Ask the studio to add a plan.
+        </p>
+      </section>
+    );
+  }
   return (
     <section
       id="plans"
@@ -46,9 +62,17 @@ export function PlansSection({
         Top up your credits or start an unlimited plan.
       </p>
       <ul className="mt-4 grid gap-3 sm:grid-cols-3">
-        {PLAN_OPTIONS.map((plan) => {
+        {plans.map((plan) => {
           const emphasized = highlighted === plan.id;
           const isBusy = busyPlanId === plan.id;
+          const accessLabel =
+            plan.type === "unlimited" ? "Unlimited" : "Credit pack";
+          const headline =
+            plan.type === "unlimited"
+              ? "Unlimited classes"
+              : plan.credits === 1
+                ? "1 class"
+                : `${plan.credits} classes`;
           return (
             <li
               key={plan.id}
@@ -59,16 +83,16 @@ export function PlansSection({
               }`}
             >
               <span className="text-xs uppercase tracking-wide text-white/40">
-                {plan.type === "unlimited" ? "Unlimited" : "Credit pack"}
+                {accessLabel}
               </span>
               <span className="text-sm font-medium">{plan.name}</span>
-              <span className="text-xs text-white/50">{plan.headline}</span>
-              <p className="mt-1 text-xs text-white/40 flex-1">
-                {plan.description}
-              </p>
+              <span className="text-xs text-white/50">{headline}</span>
+              <span className="text-xs text-white/60">
+                {formatPriceEur(plan.priceCents)}
+              </span>
               <button
                 onClick={() => onBuy(plan)}
-                disabled={isBusy || busyPlanId !== null && busyPlanId !== undefined}
+                disabled={isBusy || (busyPlanId !== null && busyPlanId !== undefined)}
                 className="mt-2 rounded border border-white/20 px-2.5 py-1 text-xs text-white/80 hover:text-white hover:border-white/40 disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 {isBusy ? "Opening checkout…" : `Buy ${plan.name}`}

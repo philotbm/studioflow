@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import type { Member } from "./data";
+import type { Plan } from "@/lib/plans";
 import {
   summariseMembership,
   shortStatusLabel,
@@ -24,8 +25,8 @@ const toneBorder: Record<MembershipTone, string> = {
   blocked: "border-red-400/30",
 };
 
-function MemberRow({ m }: { m: Member }) {
-  const summary = summariseMembership(m);
+function MemberRow({ m, plans }: { m: Member; plans: Plan[] }) {
+  const summary = summariseMembership(m, plans);
   const short = shortStatusLabel(summary);
   const accessLabel = accessTypeLabel(summary);
   return (
@@ -50,7 +51,7 @@ function MemberRow({ m }: { m: Member }) {
 }
 
 export default function MembersPage() {
-  const { members, loading, error } = useStore();
+  const { members, plans, loading, error } = useStore();
 
   if (loading) {
     return (
@@ -86,7 +87,7 @@ export default function MembersPage() {
       <ul className="mt-6 flex flex-col gap-3">
         {members.map((m) => (
           <li key={m.id}>
-            <MemberRow m={m} />
+            <MemberRow m={m} plans={plans} />
           </li>
         ))}
       </ul>

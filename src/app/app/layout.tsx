@@ -8,6 +8,7 @@ const navItems = [
   { label: "Dashboard", href: "/app" },
   { label: "Classes", href: "/app/classes" },
   { label: "Members", href: "/app/members" },
+  { label: "Plans", href: "/app/plans" },
 ];
 
 export default function AppLayout({

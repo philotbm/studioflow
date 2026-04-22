@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "./supabase";
+import type { Plan, PlanType } from "./plans";
 import type {
   MemberAccessRow,
   ClassRow,
@@ -1025,6 +1026,43 @@ export async function fetchMemberPurchases(
     planId: r.plan_id,
     source: r.source,
     externalId: r.external_id,
+    createdAt: r.created_at,
+  }));
+}
+
+// ── v0.14.0: plan catalogue reader (client-side) ───────────────────
+
+type PlanRowShape = {
+  id: string;
+  name: string;
+  type: PlanType;
+  price_cents: number;
+  credits: number | null;
+  created_at: string;
+};
+
+/**
+ * Read all plans for the client store slice. The server-side callers
+ * (applyPurchase, create-checkout-session, /app/plans) use the
+ * equivalent helpers in src/lib/plans-db.ts; this one exists so the
+ * StoreProvider can hydrate `plans` alongside classes/members in a
+ * single Promise.all pass.
+ */
+export async function fetchAllPlans(): Promise<Plan[]> {
+  const { data, error } = await requireClient()
+    .from("plans")
+    .select("id, name, type, price_cents, credits, created_at")
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("[fetchAllPlans] query failed:", error.message);
+    return [];
+  }
+  return (data as PlanRowShape[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    type: r.type,
+    priceCents: r.price_cents,
+    credits: r.credits,
     createdAt: r.created_at,
   }));
 }
