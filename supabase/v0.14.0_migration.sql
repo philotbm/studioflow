@@ -69,7 +69,7 @@ CREATE OR REPLACE FUNCTION sf_apply_purchase(
   p_source      text,
   p_external_id text
 )
-RETURNS jsonb LANGUAGE plpgsql AS $$
+RETURNS jsonb LANGUAGE plpgsql AS $func$
 DECLARE
   v_purchase_id  uuid;
   v_new_credits  integer;
@@ -122,4 +122,4 @@ BEGIN
     RAISE EXCEPTION 'sf_apply_purchase: unknown plan_type %', p_plan_type;
   END IF;
 END;
-$$;
+$func$;
