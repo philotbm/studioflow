@@ -7,6 +7,7 @@ import type {
 } from "@/app/app/members/data";
 import type { EntitlementSource } from "@/lib/eligibility";
 import { entitlementSourceFor } from "@/lib/eligibility";
+import { PLAN_OPTIONS } from "@/lib/plans";
 
 /**
  * v0.9.4 Memberships / Packs Foundation — presentation-only.
@@ -112,6 +113,33 @@ function activeCreditPack(member: Member): CreditPackPurchase | null {
   return null;
 }
 
+/**
+ * v0.13.3 safe pack-size derivation.
+ *
+ * The prior rule used the seed-time `purchase_insights_json.activePlan
+ * .totalCredits` verbatim, which drifted out of sync the moment a
+ * member bought a bigger pack — e.g. a seeded 5-Class Pass member who
+ * bought a 10-Class Pass ended up showing "10 of 5 credits left".
+ *
+ * The new rule matches the CURRENT `plan_name` against the central
+ * plan catalogue (src/lib/plans.ts) and returns the matched pack size
+ * ONLY when the live credit balance fits inside it. If balance exceeds
+ * the pack (e.g. manual operator adjustments, unusual top-ups), we
+ * return `null` so the UI falls back to the neutral "X credits left"
+ * copy rather than mathematically impossible "X of Y" wording.
+ */
+function derivePackSize(member: Member): number | null {
+  if (member.planType !== "class_pack" && member.planType !== "trial") {
+    return null;
+  }
+  const credits = member.credits;
+  if (credits === null) return null;
+  const plan = PLAN_OPTIONS.find((p) => p.name === member.plan);
+  if (plan?.credits === undefined) return null;
+  if (credits > plan.credits) return null;
+  return plan.credits;
+}
+
 // ── Bucket derivation ────────────────────────────────────────────────
 /**
  * Map a member onto exactly one MembershipStatus bucket. Projection is
@@ -149,7 +177,7 @@ function deriveStatus(member: Member): MembershipStatus {
 function composeSummary(
   member: Member,
   status: MembershipStatus,
-  pack: CreditPackPurchase | null,
+  packSize: number | null,
 ): string {
   const plan = member.plan;
   switch (status) {
@@ -157,13 +185,20 @@ function composeSummary(
       return `${plan} · Unlimited access`;
     case "pack_healthy": {
       const c = member.credits ?? 0;
-      if (pack) return `${plan} · ${c} of ${pack.totalCredits} credits left`;
+      // v0.13.3: only include "of Y" when packSize is present AND the
+      // balance fits inside it. derivePackSize already enforces that —
+      // here we just trust the guard above.
+      if (packSize !== null) {
+        return `${plan} · ${c} of ${packSize} credits left`;
+      }
       return `${plan} · ${c} credits left`;
     }
     case "pack_low": {
       const c = member.credits ?? 0;
       const credLabel = c === 1 ? "1 credit left" : `${c} credits left`;
-      if (pack) return `${plan} · ${credLabel} (low — renewal nudge)`;
+      if (packSize !== null) {
+        return `${plan} · ${credLabel} (low — renewal nudge)`;
+      }
       return `${plan} · ${credLabel} (low)`;
     }
     case "pack_drained":
@@ -213,6 +248,12 @@ export function summariseMembership(member: Member): MembershipSummary {
   const unlimited = activeUnlimited(member);
   const pack = activeCreditPack(member);
   const startDate = unlimited?.startDate ?? pack?.purchaseDate ?? null;
+  // v0.13.3: derive pack size from the plan catalogue + live balance
+  // guard (see derivePackSize). This is the ONLY source the public
+  // `totalCredits` field and composeSummary's "X of Y" phrase read
+  // from — seed `pack.totalCredits` is no longer trusted because it
+  // drifts after a purchase.
+  const packSize = derivePackSize(member);
 
   return {
     planName: member.plan,
@@ -220,9 +261,9 @@ export function summariseMembership(member: Member): MembershipSummary {
     accessType: entitlementSourceFor(member.planType),
     status,
     creditsRemaining: member.credits,
-    totalCredits: pack?.totalCredits ?? null,
+    totalCredits: packSize,
     startDate,
-    summaryLine: composeSummary(member, status, pack),
+    summaryLine: composeSummary(member, status, packSize),
     restrictionNote: composeRestriction(status),
     tone: toneFor(status),
   };
