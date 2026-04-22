@@ -48,6 +48,15 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+  if (!plan.active) {
+    // v0.14.1: inactive plans are hidden from the member purchase
+    // surface, but a stale client state could still POST one. Reject
+    // loudly so the member doesn't get a confusing partial flow.
+    return NextResponse.json(
+      { ok: false, error: `This plan isn't available any more.` },
+      { status: 400 },
+    );
+  }
 
   const client = getSupabaseClient();
   if (!client) {

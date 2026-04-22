@@ -40,6 +40,7 @@ export type ApplyPurchaseErr = {
   error: string;
   code?:
     | "unknown_plan"
+    | "inactive_plan"
     | "no_supabase"
     | "rpc_error"
     | "unexpected_response";
@@ -57,6 +58,16 @@ export async function applyPurchase(
       ok: false,
       error: `Unknown plan: ${input.planId}`,
       code: "unknown_plan",
+    };
+  }
+  // v0.14.1: belt-and-braces. Even if a client bypasses the active-only
+  // filter on the purchase surface, we refuse to grant an entitlement
+  // for an inactive plan.
+  if (!plan.active) {
+    return {
+      ok: false,
+      error: `Plan is inactive: ${input.planId}`,
+      code: "inactive_plan",
     };
   }
 

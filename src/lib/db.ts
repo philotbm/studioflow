@@ -1038,20 +1038,19 @@ type PlanRowShape = {
   type: PlanType;
   price_cents: number;
   credits: number | null;
+  active: boolean;
   created_at: string;
 };
 
 /**
- * Read all plans for the client store slice. The server-side callers
- * (applyPurchase, create-checkout-session, /app/plans) use the
- * equivalent helpers in src/lib/plans-db.ts; this one exists so the
- * StoreProvider can hydrate `plans` alongside classes/members in a
- * single Promise.all pass.
+ * Read all plans for the client store slice. Includes inactive rows;
+ * the consumer filters for the member-facing purchase surface, and
+ * the operator admin page shows active + inactive together.
  */
 export async function fetchAllPlans(): Promise<Plan[]> {
   const { data, error } = await requireClient()
     .from("plans")
-    .select("id, name, type, price_cents, credits, created_at")
+    .select("id, name, type, price_cents, credits, active, created_at")
     .order("created_at", { ascending: false });
   if (error) {
     console.error("[fetchAllPlans] query failed:", error.message);
@@ -1063,6 +1062,7 @@ export async function fetchAllPlans(): Promise<Plan[]> {
     type: r.type,
     priceCents: r.price_cents,
     credits: r.credits,
+    active: r.active,
     createdAt: r.created_at,
   }));
 }
