@@ -515,28 +515,80 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
       member.bookingAccess.statusCode === "trial_used" ||
       member.bookingAccess.statusCode === "no_entitlement");
 
-  // Partition non-completed classes into "mine" vs "browse".
+  // v0.13.3 temporal-sanity partition. Every class the member has a
+  // row against is sorted into exactly one of three buckets:
+  //
+  //   Your upcoming classes — genuinely future or in-progress, still
+  //     actionable from the member's point of view.
+  //   Recent class activity — the class is over for the member
+  //     (completed lifecycle OR terminal attendee status like
+  //     no_show / late_cancel / cancelled). Read-only.
+  //   Browse classes       — upcoming classes the member is NOT in.
+  //
+  // The prior rule only checked `lifecycle !== "completed"` and never
+  // looked at attendee.status, which let late_cancel / no_show rows
+  // leak into Your upcoming classes during live classes.
   type MyClassEntry = {
     cls: StudioClass;
     attendeeStatus: string | undefined;
     waitlistPosition: number | undefined;
   };
+  const TERMINAL_ATTENDEE_STATUSES: ReadonlyArray<string> = [
+    "no_show",
+    "late_cancel",
+    "cancelled",
+  ];
+  function isTerminalStatus(s: string | undefined): boolean {
+    return s !== undefined && TERMINAL_ATTENDEE_STATUSES.includes(s);
+  }
+
   const myClasses: MyClassEntry[] = [];
+  const recentActivity: MyClassEntry[] = [];
   const browseClasses: StudioClass[] = [];
   for (const cls of classes) {
-    if (cls.lifecycle === "completed") continue;
     const attendee = cls.attendees.find((a) => a.memberId === member.id);
     const waitlistEntry = cls.waitlist?.find((w) => w.memberId === member.id);
-    if (attendee || waitlistEntry) {
+    const memberHasRow = attendee !== undefined || waitlistEntry !== undefined;
+
+    // Recent activity: member has a row AND (class is completed OR
+    // attendee status is terminal). Terminal status in a live/upcoming
+    // class means the outcome is already settled — late cancel on a
+    // still-upcoming class is the common case.
+    if (
+      memberHasRow &&
+      (cls.lifecycle === "completed" || isTerminalStatus(attendee?.status))
+    ) {
+      recentActivity.push({
+        cls,
+        attendeeStatus: attendee?.status,
+        waitlistPosition: waitlistEntry?.position,
+      });
+      continue;
+    }
+
+    // Your upcoming classes: member has a row, class is not completed,
+    // attendee status (if any) is still open (booked / checked_in).
+    if (memberHasRow && cls.lifecycle !== "completed") {
       myClasses.push({
         cls,
         attendeeStatus: attendee?.status,
         waitlistPosition: waitlistEntry?.position,
       });
-    } else if (cls.lifecycle === "upcoming") {
+      continue;
+    }
+
+    // Browse: upcoming class the member is NOT in.
+    if (!memberHasRow && cls.lifecycle === "upcoming") {
       browseClasses.push(cls);
     }
   }
+  // Recent activity newest-first, capped at 5.
+  recentActivity.sort((a, b) => {
+    const atA = a.cls.checkInOpensAt;
+    const atB = b.cls.checkInOpensAt;
+    return atB.localeCompare(atA);
+  });
+  const recentActivityCapped = recentActivity.slice(0, 5);
 
   async function handleBook(cls: StudioClass) {
     if (busyClassSlug || !member) return;
@@ -803,6 +855,56 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
           </ul>
         )}
       </section>
+
+      {/* v0.13.3 Recent class activity — read-only. Shows the 5 most
+          recent classes that are already in a settled outcome from the
+          member's perspective (class completed, or attendee status is
+          terminal like late_cancel / no_show). Prevents past outcomes
+          from leaking into Your upcoming classes. Section is hidden
+          entirely when there's nothing to show. */}
+      {recentActivityCapped.length > 0 && (
+        <section className="mt-8" aria-label="Recent class activity">
+          <h2 className="text-sm font-medium text-white/70">
+            Recent class activity
+            <span className="ml-2 text-white/40">
+              {recentActivityCapped.length}
+            </span>
+          </h2>
+          <ul className="mt-3 flex flex-col gap-2">
+            {recentActivityCapped.map((entry) => {
+              const s = entry.attendeeStatus;
+              const label = (() => {
+                if (s === "checked_in") return "Checked in";
+                if (s === "no_show") return "No-show";
+                if (s === "late_cancel") return "Late cancel";
+                if (s === "cancelled") return "Cancelled";
+                if (s === "booked") return "Missed check-in";
+                return "Attended";
+              })();
+              const color = (() => {
+                if (s === "checked_in") return "text-green-400";
+                if (s === "no_show" || s === "late_cancel" || s === "cancelled")
+                  return "text-red-400";
+                return "text-white/60";
+              })();
+              return (
+                <li
+                  key={entry.cls.id}
+                  className="flex items-center justify-between rounded border border-white/10 px-4 py-2"
+                >
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-sm">{entry.cls.name}</span>
+                    <span className="text-xs text-white/40">
+                      {entry.cls.time} · {entry.cls.instructor}
+                    </span>
+                  </div>
+                  <span className={`shrink-0 text-xs ${color}`}>{label}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       {/* Browse classes */}
       <section className="mt-8" aria-label="Browse classes">

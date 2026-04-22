@@ -569,58 +569,26 @@ const eventLabel: Record<string, string> = {
 };
 
 /**
- * v0.13.2 Active entitlement — live truth for "what the member has
- * right now". Replaces the seed-time `purchase_insights_json.activePlan`
- * snapshot, which drifted out of date the moment a purchase changed
- * the live `members` row. The card here reads live columns + the plan
- * catalogue (src/lib/plans.ts) only — no seed JSON.
+ * v0.13.3 Active entitlement card — now consumes the shared
+ * `summariseMembership` derivation from src/lib/memberships.ts. Prior
+ * to v0.13.3 this surface had its own local `deriveActiveEntitlement`
+ * helper; after fixing the "10 of 5" bug at the shared layer, that
+ * duplicate was no longer adding anything and it was deleted so every
+ * commercial surface on the member pages consumes one truth source.
+ *
+ * Shows plan name, access type, credits ("X of Y" only when the pack
+ * size is known AND the live balance fits inside it), and the server's
+ * bookability verdict.
  */
-type ActiveEntitlement = {
-  /** True when the server says the member can book right now. */
-  isActive: boolean;
-  /** class_pack | unlimited | trial | drop_in — straight from the DB. */
-  planType: Member["planType"];
-  /** Live plan_name (e.g. "5-Class Pass", "Unlimited Monthly"). */
-  planName: string;
-  /** Live credits_remaining. Null for unlimited / drop-in. */
-  creditsRemaining: number | null;
-  /**
-   * Pack size inferred by matching plan_name against PLAN_OPTIONS.
-   * Null when the plan isn't a known credit pack OR the balance has
-   * drifted above the original pack size (manual adjustments etc.) —
-   * in that case we don't show "X of Y" because it would be confusing.
-   */
-  totalCredits: number | null;
-};
-
-function deriveActiveEntitlement(member: Member): ActiveEntitlement {
-  const plan = PLAN_OPTIONS.find((p) => p.name === member.plan);
-  const creditsRemaining = member.credits;
-  let totalCredits: number | null = null;
-  if (
-    plan?.credits !== undefined &&
-    creditsRemaining !== null &&
-    creditsRemaining <= plan.credits
-  ) {
-    totalCredits = plan.credits;
-  }
-  return {
-    isActive: member.bookingAccess.canBook,
-    planType: member.planType,
-    planName: member.plan,
-    creditsRemaining,
-    totalCredits,
-  };
-}
-
 function ActiveEntitlementCard({ member }: { member: Member }) {
-  const e = deriveActiveEntitlement(member);
+  const summary = summariseMembership(member);
+  const isActive = member.bookingAccess.canBook;
 
   const statusPill = (() => {
-    if (e.isActive && e.planType === "unlimited") {
+    if (isActive && summary.planType === "unlimited") {
       return { label: "Active · unlimited", cls: "text-green-400 border-green-400/30" };
     }
-    if (e.isActive) {
+    if (isActive) {
       return { label: "Active", cls: "text-green-400 border-green-400/30" };
     }
     // Inactive for entitlement reasons (credits / trial / drop-in).
@@ -628,7 +596,7 @@ function ActiveEntitlementCard({ member }: { member: Member }) {
   })();
 
   const accessType = (() => {
-    switch (e.planType) {
+    switch (summary.planType) {
       case "unlimited": return "Unlimited";
       case "class_pack": return "Credit pack";
       case "trial": return "Trial";
@@ -637,17 +605,19 @@ function ActiveEntitlementCard({ member }: { member: Member }) {
   })();
 
   const creditsLabel = (() => {
-    if (e.creditsRemaining === null) return null; // unlimited / drop-in
-    if (e.totalCredits !== null) return `${e.creditsRemaining} of ${e.totalCredits}`;
-    return `${e.creditsRemaining}`;
+    if (summary.creditsRemaining === null) return null; // unlimited / drop-in
+    if (summary.totalCredits !== null) {
+      return `${summary.creditsRemaining} of ${summary.totalCredits}`;
+    }
+    return `${summary.creditsRemaining}`;
   })();
 
   return (
     <div
-      className={`rounded border px-4 py-3 ${e.isActive ? "border-white/15" : "border-amber-400/30"}`}
+      className={`rounded border px-4 py-3 ${isActive ? "border-white/15" : "border-amber-400/30"}`}
     >
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium">{e.planName}</span>
+        <span className="text-sm font-medium">{summary.planName}</span>
         <span className={`rounded-full border px-2 py-0.5 text-xs ${statusPill.cls}`}>
           {statusPill.label}
         </span>
@@ -662,11 +632,9 @@ function ActiveEntitlementCard({ member }: { member: Member }) {
             <dt className="text-xs text-white/40">Credits</dt>
             <dd
               className={`text-sm font-semibold ${
-                (e.creditsRemaining ?? 0) === 0
+                (summary.creditsRemaining ?? 0) <= 1
                   ? "text-amber-400"
-                  : (e.creditsRemaining ?? 0) <= 1
-                    ? "text-amber-400"
-                    : ""
+                  : ""
               }`}
             >
               {creditsLabel}
@@ -676,9 +644,9 @@ function ActiveEntitlementCard({ member }: { member: Member }) {
         <div>
           <dt className="text-xs text-white/40">Bookable</dt>
           <dd
-            className={`text-sm font-semibold ${e.isActive ? "text-green-400" : "text-amber-400"}`}
+            className={`text-sm font-semibold ${isActive ? "text-green-400" : "text-amber-400"}`}
           >
-            {e.isActive ? "Yes" : "No"}
+            {isActive ? "Yes" : "No"}
           </dd>
         </div>
       </dl>
