@@ -5,12 +5,11 @@ import { useEffect, useState } from "react";
 import { useMember, useStore, formatRelative } from "@/lib/store";
 import type { LedgerEntry, ManualAdjustReason, PurchaseRecord } from "@/lib/db";
 import { MANUAL_ADJUST_REASONS } from "@/lib/db";
-import { findPlan } from "@/lib/plans";
+import { findPlan, PLAN_OPTIONS } from "@/lib/plans";
 import type {
   Member,
   MemberInsights,
-  PurchaseEntry,
-  CreditPackPurchase,
+  OpportunitySignal,
 } from "../data";
 import { decideEligibility, consumptionLabel } from "@/lib/eligibility";
 import {
@@ -551,25 +550,6 @@ function revenueImpact(ins: MemberInsights): {
   return { spotHolding, spotHoldingColor, cancellationTiming, overallImpact, overallColor };
 }
 
-function usagePattern(usageLog: { className: string }[]): { label: string; count: number }[] {
-  const counts: Record<string, number> = {};
-  for (const u of usageLog) {
-    counts[u.className] = (counts[u.className] || 0) + 1;
-  }
-  return Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([label, count]) => ({ label, count }));
-}
-
-function usageVelocity(entry: CreditPackPurchase): { label: string; color: string } {
-  if (entry.creditsUsed === 0) return { label: "Not started", color: "text-white/40" };
-  const usedRatio = entry.creditsUsed / entry.totalCredits;
-  if (usedRatio >= 0.6) return { label: "Fast", color: "text-green-400" };
-  if (usedRatio >= 0.3) return { label: "On track", color: "text-white/60" };
-  return { label: "Slow", color: "text-amber-400" };
-}
-
 const eventColor: Record<string, string> = {
   upcoming: "text-white/60",
   attended: "text-green-400",
@@ -588,142 +568,169 @@ const eventLabel: Record<string, string> = {
   started: "Started",
 };
 
-function statusBadgeStyle(status: string): string {
-  switch (status) {
-    case "Active": return "text-green-400 border-green-400/30";
-    case "Consumed": return "text-white/40 border-white/10";
-    case "Expired": return "text-red-400/60 border-red-400/20";
-    default: return "text-white/30 border-white/10";
+/**
+ * v0.13.2 Active entitlement — live truth for "what the member has
+ * right now". Replaces the seed-time `purchase_insights_json.activePlan`
+ * snapshot, which drifted out of date the moment a purchase changed
+ * the live `members` row. The card here reads live columns + the plan
+ * catalogue (src/lib/plans.ts) only — no seed JSON.
+ */
+type ActiveEntitlement = {
+  /** True when the server says the member can book right now. */
+  isActive: boolean;
+  /** class_pack | unlimited | trial | drop_in — straight from the DB. */
+  planType: Member["planType"];
+  /** Live plan_name (e.g. "5-Class Pass", "Unlimited Monthly"). */
+  planName: string;
+  /** Live credits_remaining. Null for unlimited / drop-in. */
+  creditsRemaining: number | null;
+  /**
+   * Pack size inferred by matching plan_name against PLAN_OPTIONS.
+   * Null when the plan isn't a known credit pack OR the balance has
+   * drifted above the original pack size (manual adjustments etc.) —
+   * in that case we don't show "X of Y" because it would be confusing.
+   */
+  totalCredits: number | null;
+};
+
+function deriveActiveEntitlement(member: Member): ActiveEntitlement {
+  const plan = PLAN_OPTIONS.find((p) => p.name === member.plan);
+  const creditsRemaining = member.credits;
+  let totalCredits: number | null = null;
+  if (
+    plan?.credits !== undefined &&
+    creditsRemaining !== null &&
+    creditsRemaining <= plan.credits
+  ) {
+    totalCredits = plan.credits;
   }
+  return {
+    isActive: member.bookingAccess.canBook,
+    planType: member.planType,
+    planName: member.plan,
+    creditsRemaining,
+    totalCredits,
+  };
+}
+
+function ActiveEntitlementCard({ member }: { member: Member }) {
+  const e = deriveActiveEntitlement(member);
+
+  const statusPill = (() => {
+    if (e.isActive && e.planType === "unlimited") {
+      return { label: "Active · unlimited", cls: "text-green-400 border-green-400/30" };
+    }
+    if (e.isActive) {
+      return { label: "Active", cls: "text-green-400 border-green-400/30" };
+    }
+    // Inactive for entitlement reasons (credits / trial / drop-in).
+    return { label: "Needs top-up", cls: "text-amber-400 border-amber-400/30" };
+  })();
+
+  const accessType = (() => {
+    switch (e.planType) {
+      case "unlimited": return "Unlimited";
+      case "class_pack": return "Credit pack";
+      case "trial": return "Trial";
+      case "drop_in": return "Drop-in";
+    }
+  })();
+
+  const creditsLabel = (() => {
+    if (e.creditsRemaining === null) return null; // unlimited / drop-in
+    if (e.totalCredits !== null) return `${e.creditsRemaining} of ${e.totalCredits}`;
+    return `${e.creditsRemaining}`;
+  })();
+
+  return (
+    <div
+      className={`rounded border px-4 py-3 ${e.isActive ? "border-white/15" : "border-amber-400/30"}`}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium">{e.planName}</span>
+        <span className={`rounded-full border px-2 py-0.5 text-xs ${statusPill.cls}`}>
+          {statusPill.label}
+        </span>
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div>
+          <dt className="text-xs text-white/40">Access type</dt>
+          <dd className="text-sm font-semibold">{accessType}</dd>
+        </div>
+        {creditsLabel !== null && (
+          <div>
+            <dt className="text-xs text-white/40">Credits</dt>
+            <dd
+              className={`text-sm font-semibold ${
+                (e.creditsRemaining ?? 0) === 0
+                  ? "text-amber-400"
+                  : (e.creditsRemaining ?? 0) <= 1
+                    ? "text-amber-400"
+                    : ""
+              }`}
+            >
+              {creditsLabel}
+            </dd>
+          </div>
+        )}
+        <div>
+          <dt className="text-xs text-white/40">Bookable</dt>
+          <dd
+            className={`text-sm font-semibold ${e.isActive ? "text-green-400" : "text-amber-400"}`}
+          >
+            {e.isActive ? "Yes" : "No"}
+          </dd>
+        </div>
+      </dl>
+      <p className="mt-3 text-[11px] text-white/40">
+        Live values — reflect the current `members` row. Purchase
+        history below is the authoritative record of when this
+        entitlement changed.
+      </p>
+    </div>
+  );
 }
 
 /**
- * v0.9.0.2 member credit truth alignment.
- *
- * purchase_insights_json.activePlan.creditsRemaining / creditsUsed
- * are frozen seed-time values. The live balance lives in the members
- * table's credits_remaining column, which sf_book_member /
- * sf_cancel_booking mutate atomically. Rendering the seed snapshot
- * on the same page as the live Booking Access panel produces two
- * contradictory numbers for one member.
- *
- * This helper returns a reconciled copy of the active plan where the
- * credit_pack remaining + used fields reflect the live column. For
- * previous (historical) purchases the snapshot is left alone — those
- * rows represent past packs and are not live truth.
- *
- * Rules:
- *   - credit_pack active plan + live credits available → override
- *     creditsRemaining = live credits (clamped ≥ 0)
- *     creditsUsed      = totalCredits − creditsRemaining (clamped ≥ 0)
- *   - any other active-plan type (unlimited, simple) or missing live
- *     credits → pass through unchanged.
+ * v0.13.2 opportunity-signal filter. Seed JSON signals are advisory
+ * text written at seed time; after a purchase they can contradict
+ * live state. Hide any signal whose text is factually wrong against
+ * the current live entitlement. Signals that still make sense
+ * (reliability, attendance, under-using unlimited while still
+ * unlimited, etc.) pass through unchanged.
  */
-function reconcileActivePlanWithLiveCredits(
-  entry: PurchaseEntry,
-  liveCredits: number | null,
-): PurchaseEntry {
-  if (entry.type !== "credit_pack" || liveCredits === null) return entry;
-  const remaining = Math.max(0, liveCredits);
-  const used = Math.max(0, entry.totalCredits - remaining);
-  return { ...entry, creditsRemaining: remaining, creditsUsed: used };
-}
+function filterOpportunitySignals(
+  signals: OpportunitySignal[],
+  member: Member,
+): OpportunitySignal[] {
+  const canBook = member.bookingAccess.canBook;
+  const isUnlimited = member.planType === "unlimited";
+  return signals.filter((s) => {
+    const text = `${s.label} ${s.detail}`.toLowerCase();
 
-function PurchaseCard({ entry }: { entry: PurchaseEntry }) {
-  const status = entry.purchaseStatus;
-  const isActive = status === "Active";
-  const isMuted = !isActive;
+    // Hide "sell them another pack" / "drained" copy when live state
+    // says the member is bookable — the nudge is factually wrong.
+    const mentionsRepurchase =
+      text.includes("repurchase") ||
+      text.includes("ready for another pack") ||
+      text.includes("drained") ||
+      text.includes("fully consumed") ||
+      text.includes("likely to repurchase");
+    if (mentionsRepurchase && canBook) return false;
 
-  if (entry.type === "credit_pack") {
-    const pct = Math.round((entry.creditsUsed / entry.totalCredits) * 100);
-    const pattern = usagePattern(entry.usageLog);
-    const velocity = usageVelocity(entry);
-    return (
-      <div className={`rounded border px-4 py-3 ${isMuted ? "border-white/5" : "border-white/10"}`}>
-        <div className="flex items-center justify-between">
-          <span className={`text-sm font-medium ${isMuted ? "text-white/50" : ""}`}>{entry.product}</span>
-          <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadgeStyle(status)}`}>
-            {status}
-          </span>
-        </div>
-        <span className="text-xs text-white/30">Purchased {entry.purchaseDate}</span>
+    // Hide "upgrade candidate → unlimited" suggestions once the
+    // member already is unlimited.
+    const suggestsUnlimitedUpgrade =
+      text.includes("upgrade candidate") ||
+      text.includes("unlimited would suit");
+    if (suggestsUnlimitedUpgrade && isUnlimited) return false;
 
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div>
-            <span className="text-xs text-white/40">Used</span>
-            <p className="text-sm font-semibold">{entry.creditsUsed}/{entry.totalCredits}</p>
-          </div>
-          <div>
-            <span className="text-xs text-white/40">Remaining</span>
-            <p className={`text-sm font-semibold ${entry.creditsRemaining === 0 ? "text-white/30" : entry.creditsRemaining <= 1 ? "text-amber-400" : ""}`}>
-              {entry.creditsRemaining}
-            </p>
-          </div>
-          <div>
-            <span className="text-xs text-white/40">Last used</span>
-            <p className="text-sm font-semibold">{entry.lastUsedDate ?? "\u2014"}</p>
-          </div>
-          <div>
-            <span className="text-xs text-white/40">Velocity</span>
-            <p className={`text-sm font-semibold ${velocity.color}`}>{velocity.label}</p>
-          </div>
-        </div>
+    // Hide "under-using unlimited" if the member no longer has
+    // unlimited.
+    if (text.includes("under-using unlimited") && !isUnlimited) return false;
 
-        <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
-          <div
-            className="h-1.5 rounded-full bg-white/30"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-
-        {pattern.length > 0 && (
-          <div className="mt-3">
-            <span className="text-xs text-white/30">Usage pattern</span>
-            <div className="mt-1 flex flex-wrap gap-2">
-              {pattern.map((p) => (
-                <span
-                  key={p.label}
-                  className="rounded-full border border-white/10 px-2 py-0.5 text-xs text-white/50"
-                >
-                  {p.label} ({p.count})
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (entry.type === "unlimited") {
-    return (
-      <div className={`rounded border px-4 py-3 ${isMuted ? "border-white/5" : "border-white/10"}`}>
-        <div className="flex items-center justify-between">
-          <span className={`text-sm font-medium ${isMuted ? "text-white/50" : ""}`}>{entry.product}</span>
-          <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadgeStyle(status)}`}>
-            {status}
-          </span>
-        </div>
-        <span className="text-xs text-white/30">Started {entry.startDate}</span>
-        <div className="mt-3">
-          <span className="text-xs text-white/40">Classes since start</span>
-          <p className="text-sm font-semibold">{entry.classesAttendedSinceStart}</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`rounded border px-4 py-3 ${isMuted ? "border-white/5" : "border-white/10"}`}>
-      <div className="flex items-center justify-between">
-        <span className={`text-sm font-medium ${isMuted ? "text-white/50" : ""}`}>{entry.product}</span>
-        <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadgeStyle(status)}`}>
-          {status}
-        </span>
-      </div>
-      <span className="text-xs text-white/30">Purchased {entry.purchaseDate}</span>
-    </div>
-  );
+    return true;
+  });
 }
 
 export default function MemberDetail({ id }: { id: string }) {
@@ -745,7 +752,12 @@ export default function MemberDetail({ id }: { id: string }) {
   // the DB remains authoritative for booking gating (see `access` above).
   const membership = summariseMembership(member);
   const ins = member.insights;
-  const pi = member.purchaseInsights;
+  // v0.13.2: purchase_insights_json is no longer rendered directly on
+  // this page — the Active entitlement card derives from live DB state
+  // (plan_type / plan_name / credits_remaining + plan catalogue) and
+  // the Purchase history panel reads the purchases table. Seed JSON
+  // activePlan / previousPurchases / buyerPattern are kept on the
+  // member row for archive but not shown here to prevent drift.
   const reasons = reliabilityReasons(ins);
   const impact = revenueImpact(ins);
   const canAdjust = member.planType === "class_pack" || member.planType === "trial";
@@ -934,12 +946,20 @@ export default function MemberDetail({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* Opportunity signals */}
-      {(member.opportunitySignals ?? []).length > 0 && (
+      {/* Opportunity signals — v0.13.2 filter: seed signals that are
+          contradicted by live entitlement state are dropped. See
+          filterOpportunitySignals above. */}
+      {(() => {
+        const visibleSignals = filterOpportunitySignals(
+          member.opportunitySignals ?? [],
+          member,
+        );
+        if (visibleSignals.length === 0) return null;
+        return (
         <div className="mt-6">
           <h2 className="text-sm font-medium text-white/70">Opportunity signals</h2>
           <div className="mt-3 flex flex-col gap-2">
-            {member.opportunitySignals.map((s, i) => (
+            {visibleSignals.map((s, i) => (
               <div
                 key={i}
                 className={`rounded border px-4 py-2.5 ${
@@ -966,7 +986,8 @@ export default function MemberDetail({ id }: { id: string }) {
             ))}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Insights */}
       <div className="mt-8">
@@ -1060,36 +1081,24 @@ export default function MemberDetail({ id }: { id: string }) {
         )}
       </div>
 
-      {/* Purchase Insights — v0.9.0 defensive: QA fixture members
-          (and any member with minimal purchase_insights_json) have no
-          activePlan / previousPurchases. Skip the whole section in
-          that case so the page still renders. */}
-      {pi.activePlan && (
-        <div className="mt-8">
-          <h2 className="text-sm font-medium text-white/70">Purchase insights</h2>
-          {pi.buyerPattern && (
-            <div className="mt-2 mb-3 text-xs text-white/40">
-              Buyer pattern: <span className="text-white/60">{pi.buyerPattern}</span>
-            </div>
-          )}
-
-          <div className="flex flex-col gap-4">
-            {/* v0.9.0.2: active plan renders against the live credit
-                column so the card can't contradict the Booking Access
-                panel. Previous (historical) purchases keep their
-                frozen snapshot — they are past state, not live truth. */}
-            <PurchaseCard
-              entry={reconcileActivePlanWithLiveCredits(
-                pi.activePlan,
-                member.credits,
-              )}
-            />
-            {(pi.previousPurchases ?? []).map((p, i) => (
-              <PurchaseCard key={i} entry={p} />
-            ))}
-          </div>
+      {/* v0.13.2 Active entitlement — replaces the old "Purchase
+          insights" section. Derived from the live members row + the
+          central plan catalogue (src/lib/plans.ts). The seed
+          purchase_insights_json (activePlan / previousPurchases /
+          buyerPattern) is no longer rendered here because it drifted
+          out of date the moment a purchase changed the live entitlement
+          — the authoritative record of historical purchases lives
+          above in Purchase history (v0.13.1). */}
+      <div className="mt-8">
+        <h2 className="text-sm font-medium text-white/70">Active entitlement</h2>
+        <p className="mt-1 text-xs text-white/40">
+          Live truth for this member&apos;s current plan and credit
+          balance. Updates on every purchase, adjustment, or booking.
+        </p>
+        <div className="mt-3">
+          <ActiveEntitlementCard member={member} />
         </div>
-      )}
+      </div>
 
       {/* History */}
       {(member.history ?? []).length > 0 && (
