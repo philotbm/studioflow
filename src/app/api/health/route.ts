@@ -4,7 +4,7 @@ export function GET() {
   return NextResponse.json({
     status: "ok",
     system: "studioflow",
-    version: "v0.13.3",
-    release: "Membership Truth + Member Home Temporal Sanity",
+    version: "v0.13.4",
+    release: "Opportunity Signal Truth Hardening",
   });
 }
