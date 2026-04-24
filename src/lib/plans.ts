@@ -28,8 +28,24 @@ export type Plan = {
   priceCents: number;
   /** class_pack: credits > 0; unlimited: null (enforced by DB CHECK). */
   credits: number | null;
+  /** v0.14.1: false hides the plan from member-facing purchase surfaces. */
+  active: boolean;
   createdAt: string;
 };
+
+/**
+ * v0.14.1 deterministic slug for plan ids. Lowercase, strip non-alnum,
+ * collapse runs of underscores. Operator-facing UIs never ask for ids
+ * — this is the internal derivation.
+ */
+export function generatePlanId(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return slug || "plan";
+}
 
 /** Lookup helper: consumers pass their own plans array (DB fetch or store slice). */
 export function findPlan(

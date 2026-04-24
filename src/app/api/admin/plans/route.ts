@@ -1,33 +1,33 @@
 import { NextResponse } from "next/server";
-import { insertPlan, listPlans } from "@/lib/plans-db";
+import { insertPlan, listPlans, updatePlanActive } from "@/lib/plans-db";
 
 /**
- * v0.14.0 plan-catalogue admin endpoint.
+ * v0.14.1 plan-catalogue admin endpoint.
  *
- *   GET  /api/admin/plans         — list all plans, newest first.
- *   POST /api/admin/plans          — create a new plan.
- *
- * POST body (JSON):
- *   { id: string, name: string, type: "class_pack"|"unlimited",
- *     priceCents: integer, credits?: integer|null }
+ *   GET   /api/admin/plans         — list all plans, newest first.
+ *   POST  /api/admin/plans         — create a plan. Body: name, type,
+ *                                    priceCents, credits. The id is
+ *                                    generated server-side from the name;
+ *                                    the operator never types it.
+ *   PATCH /api/admin/plans         — toggle active. Body: { id, active }.
  *
  * No auth layer yet — same posture as /api/qa/refresh, /api/admin/*.
- * Once StudioFlow gains operator auth, this route must be locked
- * behind operator scope. Flagged here so the reader doesn't forget.
- *
- * Validation is intentionally thin: the DB CHECKs on the `plans` table
- * enforce (type, credits) coherence and non-negative price, so a bad
- * payload surfaces as a 400 with the Postgres error message.
+ * When StudioFlow gains operator auth this must be locked behind
+ * operator scope.
  */
 
 export const runtime = "nodejs";
 
 type CreateBody = {
-  id?: unknown;
   name?: unknown;
   type?: unknown;
   priceCents?: unknown;
   credits?: unknown;
+};
+
+type PatchBody = {
+  id?: unknown;
+  active?: unknown;
 };
 
 function asInt(v: unknown): number | null {
@@ -50,9 +50,6 @@ export async function POST(req: Request) {
     );
   }
 
-  // Shape guards. DB CHECKs catch the rest (non-negative price, and
-  // the class_pack ↔ credits coherence constraint).
-  const id = typeof raw.id === "string" ? raw.id.trim() : "";
   const name = typeof raw.name === "string" ? raw.name.trim() : "";
   const type = raw.type;
   const priceCents = asInt(raw.priceCents);
@@ -61,54 +58,38 @@ export async function POST(req: Request) {
       ? null
       : asInt(raw.credits);
 
-  if (!id) {
-    return NextResponse.json(
-      { ok: false, error: "id required (lowercase, stable slug)" },
-      { status: 400 },
-    );
-  }
-  if (!/^[a-z0-9_]+$/.test(id)) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "id must be lowercase letters, digits, underscores",
-      },
-      { status: 400 },
-    );
-  }
   if (!name) {
     return NextResponse.json(
-      { ok: false, error: "name required" },
+      { ok: false, error: "Please enter a plan name." },
       { status: 400 },
     );
   }
   if (type !== "class_pack" && type !== "unlimited") {
     return NextResponse.json(
-      { ok: false, error: 'type must be "class_pack" or "unlimited"' },
+      { ok: false, error: "Plan type must be Class pack or Unlimited." },
       { status: 400 },
     );
   }
   if (priceCents === null || priceCents < 0) {
     return NextResponse.json(
-      { ok: false, error: "priceCents must be a non-negative integer" },
+      { ok: false, error: "Please enter a valid price." },
       { status: 400 },
     );
   }
   if (type === "class_pack" && (creditsRaw === null || creditsRaw <= 0)) {
     return NextResponse.json(
-      { ok: false, error: "class_pack plans require credits > 0" },
+      { ok: false, error: "Class pack plans need a whole-number credit count above 0." },
       { status: 400 },
     );
   }
   if (type === "unlimited" && creditsRaw !== null) {
     return NextResponse.json(
-      { ok: false, error: "unlimited plans must not specify credits" },
+      { ok: false, error: "Unlimited plans don't carry a credit count." },
       { status: 400 },
     );
   }
 
   const result = await insertPlan({
-    id,
     name,
     type,
     priceCents,
@@ -116,14 +97,43 @@ export async function POST(req: Request) {
   });
 
   if (!result.ok) {
-    // Common failure modes: duplicate id (23505), CHECK violation
-    // (23514). Surface the Postgres message verbatim — the admin UI
-    // will render it.
     return NextResponse.json(
       { ok: false, error: result.error },
       { status: 400 },
     );
   }
 
+  return NextResponse.json({ ok: true, plan: result.plan });
+}
+
+export async function PATCH(req: Request) {
+  const raw = (await req.json().catch(() => null)) as PatchBody | null;
+  if (!raw) {
+    return NextResponse.json(
+      { ok: false, error: "Invalid JSON body" },
+      { status: 400 },
+    );
+  }
+  const id = typeof raw.id === "string" ? raw.id.trim() : "";
+  if (!id) {
+    return NextResponse.json(
+      { ok: false, error: "id required" },
+      { status: 400 },
+    );
+  }
+  if (typeof raw.active !== "boolean") {
+    return NextResponse.json(
+      { ok: false, error: "active must be boolean" },
+      { status: 400 },
+    );
+  }
+
+  const result = await updatePlanActive(id, raw.active);
+  if (!result.ok) {
+    return NextResponse.json(
+      { ok: false, error: result.error },
+      { status: 400 },
+    );
+  }
   return NextResponse.json({ ok: true, plan: result.plan });
 }

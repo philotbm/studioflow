@@ -733,12 +733,29 @@ function stripCreditPackClauses(detail: string): string | null {
   return kept.join(" and ");
 }
 
+/**
+ * Healthy-credit threshold for the class_pack low-credit-phrase guard.
+ * A class_pack member with more than this many credits is "not low",
+ * so stale seed signals that say "low remaining credits" must not
+ * leak through. Mirrors PACK_LOW_THRESHOLD in src/lib/memberships.ts
+ * so the two surfaces agree on what "low" means.
+ */
+const HEALTHY_CREDIT_MIN = 3;
+
 function filterOpportunitySignals(
   signals: OpportunitySignal[],
   member: Member,
 ): OpportunitySignal[] {
   const canBook = member.bookingAccess.canBook;
   const isUnlimited = member.planType === "unlimited";
+  const isClassPackOrTrial =
+    member.planType === "class_pack" || member.planType === "trial";
+  const credits = member.credits ?? 0;
+  // v0.14.1: class_pack / trial members with healthy credit balances
+  // should NOT be shown stale "low remaining credits" copy. This fires
+  // alongside the v0.13.4 unlimited rule to close the symmetric case.
+  const hasHealthyCredits = isClassPackOrTrial && credits >= HEALTHY_CREDIT_MIN;
+
   const result: OpportunitySignal[] = [];
   for (const s of signals) {
     const text = `${s.label} ${s.detail}`.toLowerCase();
@@ -765,12 +782,13 @@ function filterOpportunitySignals(
     // unlimited.
     if (text.includes("under-using unlimited") && !isUnlimited) continue;
 
-    // v0.13.4: unlimited members have no credit concept. Any phrase
-    // that talks credit-pack economics is a contradiction. Prefer to
-    // strip the invalid clause and keep the truthful part (attendance,
-    // churn risk, etc.); drop the whole signal when the label itself
-    // is credit-pack-coded or nothing truthful survives.
-    if (isUnlimited && mentionsCreditPackEconomics(text)) {
+    // v0.13.4 + v0.14.1: strip credit-pack-economics phrases when they
+    // can't be true for the current member — either unlimited (no
+    // credit concept at all) or class_pack with a healthy balance (the
+    // "low credits" phrase is stale).
+    const shouldStripCreditPackPhrases =
+      (isUnlimited || hasHealthyCredits) && mentionsCreditPackEconomics(text);
+    if (shouldStripCreditPackPhrases) {
       if (mentionsCreditPackEconomics(labelLower)) continue;
       const rewrittenDetail = stripCreditPackClauses(s.detail);
       if (!rewrittenDetail) continue;

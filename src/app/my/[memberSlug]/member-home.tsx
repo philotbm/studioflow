@@ -945,7 +945,11 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
           surface when they eventually run out. v0.13.0 wires the Buy
           button to real Stripe Checkout (test mode) or the fake
           fallback. */}
-      <PlansSection plans={plans} onBuy={handleBuy} busyPlanId={busyPlanId} />
+      <PlansSection
+        plans={plans.filter((p) => p.active)}
+        onBuy={handleBuy}
+        busyPlanId={busyPlanId}
+      />
     </main>
   );
 }
