@@ -147,3 +147,88 @@ export async function updatePlanActive(
   }
   return { ok: true, plan: mapRow(data as PlanRow) };
 }
+
+export type UpdatePlanFieldsInput = {
+  name: string;
+  /** Type cannot change in v0.14.2 — see updatePlanFields. */
+  type: "class_pack" | "unlimited";
+  priceCents: number;
+  credits: number | null;
+};
+
+/**
+ * v0.14.2: edit existing plan commercial fields.
+ *
+ * Only `name`, `price_cents`, and `credits` can be modified. The id
+ * stays fixed so historical purchases keep resolving to the right
+ * row, and the type stays fixed because changing class_pack ↔
+ * unlimited would invalidate the plans_type_credits_coherent CHECK
+ * and confuse purchase history (where plan_type is snapshotted at
+ * purchase time). The caller passes `type` so the server can refuse
+ * a request that tries to change it instead of silently dropping the
+ * field.
+ *
+ * Validation of the input shape (hard rules) is the caller's job —
+ * this function just enforces the type-immutability invariant and
+ * persists.
+ */
+export async function updatePlanFields(
+  id: string,
+  input: UpdatePlanFieldsInput,
+): Promise<CreatePlanResult> {
+  const client = requireClient();
+
+  const { data: existing, error: existingErr } = await client
+    .from("plans")
+    .select(PLAN_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+  if (existingErr) {
+    return { ok: false, error: existingErr.message };
+  }
+  if (!existing) {
+    return { ok: false, error: `Plan not found: ${id}` };
+  }
+  const current = mapRow(existing as PlanRow);
+
+  if (current.type !== input.type) {
+    return {
+      ok: false,
+      error:
+        "Plan type can't be changed on an existing plan. Create a new plan and deactivate this one instead.",
+    };
+  }
+
+  // Belt-and-braces consistency check — the DB CHECK enforces this
+  // too, but a clearer error message is friendlier than 23514.
+  if (input.type === "class_pack" && (input.credits === null || input.credits <= 0)) {
+    return {
+      ok: false,
+      error: "Class pack plans need a whole-number credit count above 0.",
+    };
+  }
+  if (input.type === "unlimited" && input.credits !== null) {
+    return {
+      ok: false,
+      error: "Unlimited plans don't carry a credit count.",
+    };
+  }
+
+  const { data, error } = await client
+    .from("plans")
+    .update({
+      name: input.name,
+      price_cents: input.priceCents,
+      credits: input.type === "class_pack" ? input.credits : null,
+    })
+    .eq("id", id)
+    .select(PLAN_COLUMNS)
+    .maybeSingle();
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+  if (!data) {
+    return { ok: false, error: `Plan not found: ${id}` };
+  }
+  return { ok: true, plan: mapRow(data as PlanRow) };
+}
