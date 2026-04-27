@@ -1,41 +1,58 @@
 import { NextResponse } from "next/server";
-import { applyPurchase } from "@/lib/entitlements/applyPurchase";
+import { applyPurchase, type PurchaseSource } from "@/lib/entitlements/applyPurchase";
 import { getSupabaseClient } from "@/lib/supabase";
 
 /**
- * v0.13.0 DEV-ONLY fallback for when Stripe is not configured.
+ * v0.13.0 / v0.15.0 dev + operator fulfilment fallback for when Stripe
+ * is not configured.
  *
  *   ⚠ POST-ONLY. GET returns HTTP 405.
- *   Called by the member-home Buy button only when the server-side
- *   /api/stripe/create-checkout-session responded with { mode: "fake" }.
- *   DO NOT open in a browser; diagnostics live at
- *   /api/admin/purchase-health instead.
+ *   Called from two places:
+ *     - The member-home Buy button when /api/stripe/create-checkout-
+ *       session responded with { mode: "fake" }. Source recorded as
+ *       'dev_fake'. (Self-serve member, no Stripe configured.)
+ *     - The operator test-purchase panel on /app/members/[id], which
+ *       passes { source: "operator_manual" } so purchase history can
+ *       label it explicitly as an operator-initiated test.
  *
  * POST /api/dev/fake-purchase
- * Body: { memberSlug: string, planId: string }
+ * Body: {
+ *   memberSlug: string,
+ *   planId: string,
+ *   source?: "dev_fake" | "operator_manual"   // defaults to 'dev_fake'
+ * }
  *
- * Exists so the member commerce-entry flow can be exercised end-to-end
- * on environments with no Stripe keys (local dev, preview deploys
- * without the Stripe env bound yet). Calls the SAME applyPurchase
- * function the Stripe webhook uses — fulfillment is identical; only
- * the source tag and externalId shape differ.
+ * Calls the SAME applyPurchase function the Stripe webhook uses —
+ * fulfilment is identical; only the source tag and externalId shape
+ * differ. Inactive plans are rejected by applyPurchase (returns
+ * code: "inactive_plan") so a stale client cannot grant a stranded
+ * entitlement here.
  *
  * Auth posture matches the existing /api/qa/refresh, /api/admin/*
- * endpoints — no auth layer exists anywhere in StudioFlow yet. This
- * is acceptable for the fake path because:
- *   - The worst an attacker can do is credit a member they don't
- *     control with a demo credit pack; there is no refund side-effect
- *     and no real money changes hands.
- *   - Once real Stripe is wired up and production uses the webhook
- *     path, this endpoint is dormant on live.
- *
- * When a real auth layer ships, this route should be locked behind
- * operator scope. Flagged in the file comment for the reader.
+ * endpoints — no auth layer exists anywhere in StudioFlow yet. When a
+ * real auth layer ships, this route should be locked behind operator
+ * scope.
  */
 
 export const runtime = "nodejs";
 
-type Body = { memberSlug?: string; planId?: string };
+type Body = {
+  memberSlug?: string;
+  planId?: string;
+  source?: unknown;
+};
+
+const ALLOWED_SOURCES: ReadonlyArray<PurchaseSource> = [
+  "dev_fake",
+  "operator_manual",
+];
+
+function asAllowedSource(v: unknown): PurchaseSource {
+  if (typeof v === "string" && (ALLOWED_SOURCES as readonly string[]).includes(v)) {
+    return v as PurchaseSource;
+  }
+  return "dev_fake";
+}
 
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => null)) as Body | null;
@@ -46,6 +63,7 @@ export async function POST(req: Request) {
     );
   }
   const { memberSlug, planId } = body;
+  const source = asAllowedSource(body.source);
 
   const client = getSupabaseClient();
   if (!client) {
@@ -67,16 +85,17 @@ export async function POST(req: Request) {
     );
   }
 
-  // externalId format mirrors Stripe session ids loosely but carries
-  // the `fake_` prefix so rows in `purchases` are obviously
-  // distinguishable from real Stripe rows.
+  // External-id prefix mirrors the source so operator_manual rows are
+  // obviously distinguishable in the purchases table from member-home
+  // self-serve dev fakes and from real Stripe sessions.
+  const prefix = source === "operator_manual" ? "op" : "fake";
   const externalId =
-    `fake_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
   const result = await applyPurchase({
     memberId: member.id,
     planId,
-    source: "fake",
+    source,
     externalId,
   });
 
@@ -86,10 +105,12 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     ok: true,
-    mode: "fake",
+    mode: source,
     externalId,
     alreadyProcessed: result.alreadyProcessed,
     planTypeApplied: result.planTypeApplied,
     creditsRemaining: result.creditsRemaining,
+    priceCentsPaid: result.priceCentsPaid,
+    creditsGranted: result.creditsGranted,
   });
 }

@@ -975,11 +975,33 @@ export async function fetchRecentLedgerEntries(
  * camelCase shape for the operator member-detail surface. Mirrors the
  * TS convention used for ledger + audit reads above.
  */
+/**
+ * v0.13.1 + v0.15.0 purchase row projection.
+ *
+ * `source` accepts the legacy 'fake' value so historical pre-v0.15.0
+ * rows still resolve; new code paths emit only 'stripe', 'dev_fake',
+ * or 'operator_manual'. `status` is always 'completed' for now —
+ * 'failed' / 'refunded' / 'cancelled' exist as future-proofing but no
+ * current code path writes them.
+ */
+export type PurchaseSourceRecorded =
+  | "stripe"
+  | "fake"
+  | "dev_fake"
+  | "operator_manual";
+
+export type PurchaseStatus = "completed" | "failed" | "refunded" | "cancelled";
+
 export type PurchaseRecord = {
   id: string;
   planId: string;
-  source: "stripe" | "fake";
+  source: PurchaseSourceRecorded;
   externalId: string;
+  status: PurchaseStatus;
+  /** v0.15.0: amount paid recorded at apply time. NULL on legacy rows. */
+  priceCentsPaid: number | null;
+  /** v0.15.0: credits added at apply time. NULL on unlimited and legacy rows. */
+  creditsGranted: number | null;
   createdAt: string;
 };
 
@@ -1003,7 +1025,9 @@ export async function fetchMemberPurchases(
 
   const { data, error } = await requireClient()
     .from("purchases")
-    .select("id, plan_id, source, external_id, created_at")
+    .select(
+      "id, plan_id, source, external_id, status, price_cents_paid, credits_granted, created_at",
+    )
     .eq("member_id", mem.id)
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -1018,14 +1042,20 @@ export async function fetchMemberPurchases(
   return (data as Array<{
     id: string;
     plan_id: string;
-    source: "stripe" | "fake";
+    source: PurchaseSourceRecorded;
     external_id: string;
+    status: PurchaseStatus;
+    price_cents_paid: number | null;
+    credits_granted: number | null;
     created_at: string;
   }>).map((r) => ({
     id: r.id,
     planId: r.plan_id,
     source: r.source,
     externalId: r.external_id,
+    status: r.status,
+    priceCentsPaid: r.price_cents_paid,
+    creditsGranted: r.credits_granted,
     createdAt: r.created_at,
   }));
 }
