@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useMember, useStore, usePlans, formatRelative } from "@/lib/store";
 import type { LedgerEntry, ManualAdjustReason, PurchaseRecord } from "@/lib/db";
 import { MANUAL_ADJUST_REASONS } from "@/lib/db";
-import { findPlan, type Plan } from "@/lib/plans";
+import { findPlan, formatPriceEur, type Plan } from "@/lib/plans";
 import type {
   Member,
   MemberInsights,
@@ -409,6 +409,213 @@ function RecentLedgerPanel({
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * v0.14.3 operator test-purchase panel.
+ *
+ * Lets the operator simulate a successful payment for a member by
+ * picking an active plan and committing through the same
+ * /api/dev/fake-purchase route the member-home Buy button uses. Plan
+ * resolution, idempotency, credit-ledger writes and active-plan
+ * gating are entirely server-side — this panel is a thin UI on top of
+ * applyPurchase. No new credit logic anywhere.
+ *
+ * Active-plan filtering is purely a UI guardrail; the server still
+ * rejects an inactive id (applyPurchase returns code: "inactive_plan")
+ * so a stale dropdown can't grant a stranded entitlement.
+ *
+ * Step 1 (preview) renders a read-only summary the operator can read
+ * before committing. Step 2 (confirm) calls the server. Step 3 shows
+ * an inline success line and triggers a store refresh so the
+ * Membership panel, Credit history, and Purchase history sections
+ * pick up the new state.
+ */
+function TestPurchasePanel({
+  memberSlug,
+  plans,
+}: {
+  memberSlug: string;
+  plans: Plan[];
+}) {
+  const { refresh } = useStore();
+  const activePlans = plans.filter((p) => p.active);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<
+    | null
+    | {
+        kind: "ok";
+        planName: string;
+        planType: "class_pack" | "unlimited";
+        creditsAdded: number | null;
+        creditsRemaining: number | null;
+        alreadyProcessed: boolean;
+      }
+    | { kind: "error"; text: string }
+  >(null);
+
+  const selected = selectedId
+    ? activePlans.find((p) => p.id === selectedId) ?? null
+    : null;
+
+  // Reset any stale success/error message when the operator changes
+  // their selection — the previous outcome is no longer relevant.
+  useEffect(() => {
+    setResult(null);
+  }, [selectedId]);
+
+  async function handleConfirm() {
+    if (!selected || submitting) return;
+    setSubmitting(true);
+    setResult(null);
+    try {
+      const resp = await fetch("/api/dev/fake-purchase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberSlug, planId: selected.id }),
+      });
+      const data = (await resp.json().catch(() => null)) as
+        | {
+            ok: true;
+            mode?: string;
+            externalId?: string;
+            alreadyProcessed?: boolean;
+            planTypeApplied?: "class_pack" | "unlimited";
+            creditsRemaining?: number | null;
+          }
+        | { ok: false; error: string }
+        | null;
+      if (!data) {
+        setResult({ kind: "error", text: `Request failed (${resp.status})` });
+        return;
+      }
+      if (!data.ok) {
+        setResult({ kind: "error", text: data.error });
+        return;
+      }
+      setResult({
+        kind: "ok",
+        planName: selected.name,
+        planType: selected.type,
+        creditsAdded: selected.type === "unlimited" ? null : selected.credits,
+        creditsRemaining: data.creditsRemaining ?? null,
+        alreadyProcessed: data.alreadyProcessed ?? false,
+      });
+      // Re-hydrate so the Membership / Credit history / Purchase history
+      // panels show the new row and the new balance.
+      await refresh();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (activePlans.length === 0) {
+    return (
+      <p className="text-xs text-white/40">
+        No active plans available. Create one in{" "}
+        <Link href="/app/plans" className="underline hover:text-white/70">
+          Plans
+        </Link>
+        .
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <label className="flex flex-col gap-1">
+        <span className="text-xs text-white/50">Plan</span>
+        <select
+          value={selectedId}
+          onChange={(e) => setSelectedId(e.target.value)}
+          className="rounded border border-white/20 bg-black px-2 py-1.5 text-sm text-white/80 outline-none focus:border-white/40"
+        >
+          <option value="">Select an active plan…</option>
+          {activePlans.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} — {formatPriceEur(p.priceCents)}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {selected && (
+        <div className="rounded border border-white/15 bg-white/[0.02] px-4 py-3">
+          <p className="text-xs uppercase tracking-wide text-white/40">
+            Preview
+          </p>
+          <p className="mt-1 text-sm font-medium">{selected.name}</p>
+          <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/60">
+            <div className="flex gap-1.5">
+              <dt className="text-white/30">Type</dt>
+              <dd>
+                {selected.type === "unlimited" ? "Unlimited" : "Class pack"}
+              </dd>
+            </div>
+            <div className="flex gap-1.5">
+              <dt className="text-white/30">Price</dt>
+              <dd>{formatPriceEur(selected.priceCents)}</dd>
+            </div>
+            <div className="flex gap-1.5">
+              <dt className="text-white/30">Grants</dt>
+              <dd>
+                {selected.type === "unlimited"
+                  ? "Unlimited access"
+                  : selected.credits === 1
+                    ? "1 credit"
+                    : `${selected.credits} credits`}
+              </dd>
+            </div>
+          </dl>
+          <ul className="mt-3 flex flex-col gap-0.5 text-[11px] text-white/40">
+            <li>This will create a purchase for this member.</li>
+            <li>Credits will be added immediately.</li>
+            <li>This simulates a successful payment (no Stripe).</li>
+          </ul>
+
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleConfirm}
+              disabled={submitting}
+              className="rounded border border-white/20 px-3 py-1.5 text-xs text-white/80 hover:text-white hover:border-white/40 disabled:opacity-30"
+            >
+              {submitting ? "Applying…" : "Confirm test purchase"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {result?.kind === "ok" && (
+        <div className="rounded border border-green-400/30 bg-green-400/5 px-3 py-2 text-xs text-green-300">
+          <p className="font-medium">Purchase applied</p>
+          <p className="mt-0.5 text-green-200/80">
+            {result.planName} ·{" "}
+            {result.planType === "unlimited"
+              ? "Unlimited access"
+              : result.creditsAdded === 1
+                ? "1 credit added"
+                : `${result.creditsAdded} credits added`}
+            {result.creditsRemaining !== null &&
+              result.planType === "class_pack" &&
+              ` · balance now ${result.creditsRemaining}`}
+          </p>
+          {result.alreadyProcessed && (
+            <p className="mt-0.5 text-green-200/60">
+              Already processed — no duplicate row created.
+            </p>
+          )}
+        </div>
+      )}
+
+      {result?.kind === "error" && (
+        <div className="rounded border border-red-400/30 bg-red-400/5 px-3 py-2 text-xs text-red-300">
+          {result.text}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1000,6 +1207,24 @@ export default function MemberDetail({ id }: { id: string }) {
             memberSlug={member.id}
             liveCredits={member.credits}
           />
+        </div>
+      </div>
+
+      {/* v0.14.3 Operator test-purchase panel — placed above Purchase
+          history so the operator's read flow is "preview, commit,
+          confirm in history". Calls the same /api/dev/fake-purchase
+          route the member-home Buy button uses; the active-plan
+          guardrail is enforced in the dropdown filter and again
+          server-side by applyPurchase. */}
+      <div className="mt-6">
+        <h2 className="text-sm font-medium text-white/70">Purchase a plan</h2>
+        <p className="mt-1 text-xs text-white/40">
+          Operator-only. Simulates a successful payment for this
+          member — no Stripe call, no money moves. Reuses the same
+          server-side fulfilment as a real purchase.
+        </p>
+        <div className="mt-3">
+          <TestPurchasePanel memberSlug={member.id} plans={plans} />
         </div>
       </div>
 
