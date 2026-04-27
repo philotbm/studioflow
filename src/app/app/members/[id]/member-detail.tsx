@@ -485,7 +485,14 @@ function TestPurchasePanel({
       const resp = await fetch("/api/dev/fake-purchase", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ memberSlug, planId: selected.id }),
+        // v0.15.0: tag this as an operator-initiated test so the
+        // purchase history can label it explicitly, separate from
+        // member-home self-serve dev fakes.
+        body: JSON.stringify({
+          memberSlug,
+          planId: selected.id,
+          source: "operator_manual",
+        }),
       });
       const data = (await resp.json().catch(() => null)) as
         | {
@@ -631,17 +638,56 @@ function TestPurchasePanel({
 }
 
 /**
- * v0.13.1 Purchase history panel.
+ * v0.13.1 + v0.15.0 Purchase history panel.
  *
  * Reads the v0.13.0 `purchases` table via store.getPurchases. Shows
  * the latest N rows for this member, newest first. Plan-id is mapped
  * to display name via findPlan(); unknown ids (stale catalogue) fall
  * back to the raw id string.
  *
+ * v0.15.0 lifecycle fields rendered inline:
+ *   - status pill (only 'completed' is written today; the layout is
+ *     ready for failed/refunded/cancelled if a future flow needs them).
+ *   - source label distinguishes Stripe / dev fake / operator manual /
+ *     legacy fake.
+ *   - price + credits frozen at apply time, so a plan-price edit later
+ *     does not rewrite history. Pre-v0.15.0 rows have NULL economics
+ *     and render as "—" rather than fabricating a number.
+ *
  * Read-only. The operator cannot issue refunds or edits from here —
  * that would need a dedicated flow wired to sf_apply_purchase's
- * inverse, which is not in scope for v0.13.1.
+ * inverse, which is deliberately out of scope.
  */
+
+const PURCHASE_SOURCE_LABELS: Record<string, string> = {
+  stripe: "Stripe",
+  dev_fake: "Test purchase (no Stripe)",
+  operator_manual: "Operator test purchase",
+  // Legacy v0.13.0 / v0.14.x rows.
+  fake: "Test purchase (legacy)",
+};
+
+const PURCHASE_SOURCE_TONES: Record<string, string> = {
+  stripe: "border-green-400/30 text-green-400",
+  dev_fake: "border-white/20 text-white/50",
+  operator_manual: "border-amber-400/30 text-amber-300",
+  fake: "border-white/20 text-white/40",
+};
+
+const PURCHASE_STATUS_LABELS: Record<string, string> = {
+  completed: "Completed",
+  failed: "Failed",
+  refunded: "Refunded",
+  cancelled: "Cancelled",
+};
+
+const PURCHASE_STATUS_TONES: Record<string, string> = {
+  completed: "border-green-400/30 text-green-400",
+  failed: "border-red-400/30 text-red-400",
+  refunded: "border-amber-400/30 text-amber-300",
+  cancelled: "border-white/20 text-white/40",
+};
+
 function RecentPurchasesPanel({
   memberSlug,
   plans,
@@ -679,25 +725,60 @@ function RecentPurchasesPanel({
       {entries.map((e) => {
         const plan = findPlan(e.planId, plans);
         const planLabel = plan ? plan.name : e.planId;
-        const sourceLabel = e.source === "stripe" ? "Stripe" : "Fake (dev)";
+        const sourceLabel =
+          PURCHASE_SOURCE_LABELS[e.source] ?? e.source;
         const sourceTone =
-          e.source === "stripe" ? "text-green-400/80" : "text-white/40";
+          PURCHASE_SOURCE_TONES[e.source] ?? "border-white/20 text-white/40";
+        const statusLabel =
+          PURCHASE_STATUS_LABELS[e.status] ?? e.status;
+        const statusTone =
+          PURCHASE_STATUS_TONES[e.status] ?? "border-white/20 text-white/40";
+        // Resolve type from the live plan if it's still in the
+        // catalogue; otherwise fall back to inspecting credits_granted.
+        const isUnlimited =
+          plan?.type === "unlimited" ||
+          (plan === undefined && e.creditsGranted === null);
+        const creditsLabel = isUnlimited
+          ? "Unlimited access"
+          : e.creditsGranted === null
+            ? "—"
+            : e.creditsGranted === 1
+              ? "1 credit added"
+              : `${e.creditsGranted} credits added`;
+        const priceLabel =
+          e.priceCentsPaid === null
+            ? "—"
+            : formatPriceEur(e.priceCentsPaid);
         return (
           <li
             key={e.id}
-            className="flex items-center justify-between gap-3 rounded border border-white/10 px-4 py-2"
+            className="rounded border border-white/10 px-4 py-2.5"
           >
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <span className="text-sm">{planLabel}</span>
-              <span className="text-[11px] text-white/30 font-mono truncate">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-sm font-medium">{planLabel}</span>
+                <span className="text-[11px] text-white/40">
+                  {priceLabel} · {creditsLabel}
+                </span>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${statusTone}`}
+                >
+                  {statusLabel}
+                </span>
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[10px] ${sourceTone}`}
+                >
+                  {sourceLabel}
+                </span>
+              </div>
+            </div>
+            <div className="mt-1.5 flex items-center justify-between gap-3 text-[11px]">
+              <span className="font-mono text-white/30 truncate">
                 {e.externalId}
               </span>
-            </div>
-            <div className="flex shrink-0 flex-col items-end gap-0.5">
-              <span className={`text-[11px] ${sourceTone}`}>
-                {sourceLabel}
-              </span>
-              <span className="text-[11px] text-white/30">
+              <span className="shrink-0 text-white/40">
                 {formatRelative(new Date(e.createdAt).getTime(), now)}
               </span>
             </div>

@@ -721,7 +721,14 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
       const fakeResp = await fetch("/api/dev/fake-purchase", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ memberSlug: member.id, planId: plan.id }),
+        // v0.15.0: tag this as a dev-fake (member-initiated, no Stripe
+        // configured) so purchase history can distinguish it from
+        // operator-initiated test purchases on /app/members/[id].
+        body: JSON.stringify({
+          memberSlug: member.id,
+          planId: plan.id,
+          source: "dev_fake",
+        }),
       });
       const fakeData = (await fakeResp.json()) as {
         ok?: boolean;

@@ -24,7 +24,7 @@ type PurchaseSummaryRow = {
   memberSlug: string | null;
   memberName: string | null;
   planId: string;
-  source: "stripe" | "fake";
+  source: "stripe" | "fake" | "dev_fake" | "operator_manual";
   externalId: string;
   createdAt: string;
 };
@@ -86,7 +86,7 @@ export async function GET() {
   type PurchaseJoinedRow = {
     id: string;
     plan_id: string;
-    source: "stripe" | "fake";
+    source: "stripe" | "fake" | "dev_fake" | "operator_manual";
     external_id: string;
     created_at: string;
     members: { slug: string | null; full_name: string | null } | null;

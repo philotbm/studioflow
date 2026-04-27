@@ -1219,11 +1219,16 @@ BEGIN
 END;
 $$;
 
--- ═══ sf_apply_purchase — v0.13.0 ══════════════════════════════════════
--- Atomic idempotent fulfillment for the Stripe Checkout + fake paths.
--- Full docs: supabase/v0.13.0_migration.sql. This definition is kept
--- in sync with the migration file so fresh environments rebuilt from
--- functions.sql match live behaviour.
+-- ═══ sf_apply_purchase — v0.13.0 (lifecycle row schema added v0.15.0) ═
+-- Atomic idempotent fulfilment for Stripe webhook, member-home self-
+-- serve fallback, and operator test-purchase panel. Signature is
+-- unchanged from v0.13.0; v0.15.0 normalises the legacy 'credit_pack'
+-- alias to 'class_pack' so any straggler caller is safe. Lifecycle
+-- columns (status, price_cents_paid, credits_granted) are written by
+-- applyPurchase in a follow-up UPDATE on the returned purchase_id —
+-- keeping this function decoupled from the row schema means future
+-- schema changes do not require a function rebuild. Full docs:
+-- supabase/v0.15.0_migration.sql.
 CREATE OR REPLACE FUNCTION sf_apply_purchase(
   p_member_id   uuid,
   p_plan_id     text,
@@ -1235,9 +1240,15 @@ CREATE OR REPLACE FUNCTION sf_apply_purchase(
 )
 RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
-  v_purchase_id  uuid;
-  v_new_credits  integer;
+  v_purchase_id     uuid;
+  v_new_credits     integer;
+  v_normalised_type text;
 BEGIN
+  v_normalised_type := CASE p_plan_type
+    WHEN 'credit_pack' THEN 'class_pack'
+    ELSE p_plan_type
+  END;
+
   BEGIN
     INSERT INTO purchases (member_id, plan_id, source, external_id)
     VALUES (p_member_id, p_plan_id, p_source, p_external_id)
@@ -1250,7 +1261,7 @@ BEGIN
     );
   END;
 
-  IF p_plan_type = 'credit_pack' THEN
+  IF v_normalised_type = 'class_pack' THEN
     UPDATE members
       SET credits_remaining = COALESCE(credits_remaining, 0) + COALESCE(p_credits, 0),
           plan_type         = 'class_pack',
@@ -1266,7 +1277,7 @@ BEGIN
       'credits_remaining', v_new_credits,
       'external_id', p_external_id
     );
-  ELSIF p_plan_type = 'unlimited' THEN
+  ELSIF v_normalised_type = 'unlimited' THEN
     UPDATE members
       SET plan_type         = 'unlimited',
           plan_name         = p_plan_name,

@@ -89,17 +89,44 @@ create table if not exists booking_events (
 create index if not exists idx_events_class on booking_events(class_id);
 create index if not exists idx_events_booking on booking_events(booking_id);
 
--- ═══ PURCHASES — v0.13.0 ══════════════════════════════════════════════
+-- ═══ PURCHASES — v0.13.0 (lifecycle fields added in v0.15.0) ═════════
 -- Minimal idempotent log of fulfilled purchases. One row per Stripe
--- checkout session OR dev-fake purchase. UNIQUE(external_id) is the
--- idempotency guard used by sf_apply_purchase.
+-- checkout session OR dev-fake purchase OR operator test purchase.
+-- UNIQUE(external_id) is the idempotency guard used by sf_apply_purchase.
+--
+-- v0.15.0 lifecycle columns:
+--   status           — 'completed' | 'failed' | 'refunded' | 'cancelled'.
+--                      Only 'completed' is written today; the other
+--                      values exist so a future refund / dispute flow
+--                      can update a row without a schema change.
+--   price_cents_paid — frozen at apply time so purchase history reflects
+--                      the amount the member actually paid, regardless
+--                      of subsequent plan-price edits. NULL on legacy
+--                      pre-v0.15.0 rows.
+--   credits_granted  — frozen at apply time (NULL for unlimited).
+--
+-- v0.15.0 source values:
+--   'stripe'           — real Stripe checkout (webhook fulfilment).
+--   'fake'             — legacy v0.13.0/v0.14.x dev-fake purchases.
+--                        Kept allowed so historical rows still validate;
+--                        no new code path emits this any more.
+--   'dev_fake'         — member-home self-serve buy when Stripe isn't
+--                        configured (preview deploys, local dev).
+--   'operator_manual'  — operator test-purchase panel on /app/members/[id].
 create table if not exists purchases (
-  id           uuid primary key default gen_random_uuid(),
-  member_id    uuid not null references members(id) on delete cascade,
-  plan_id      text not null,
-  source       text not null check (source in ('stripe','fake')),
-  external_id  text not null,
-  created_at   timestamptz not null default now(),
+  id               uuid primary key default gen_random_uuid(),
+  member_id        uuid not null references members(id) on delete cascade,
+  plan_id          text not null,
+  source           text not null check (
+    source in ('stripe','fake','dev_fake','operator_manual')
+  ),
+  external_id      text not null,
+  status           text not null default 'completed' check (
+    status in ('completed','failed','refunded','cancelled')
+  ),
+  price_cents_paid integer check (price_cents_paid is null or price_cents_paid >= 0),
+  credits_granted  integer check (credits_granted is null or credits_granted >= 0),
+  created_at       timestamptz not null default now(),
   unique (external_id)
 );
 
