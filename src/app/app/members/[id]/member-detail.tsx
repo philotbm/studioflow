@@ -456,6 +456,17 @@ function TestPurchasePanel({
     | { kind: "error"; text: string }
   >(null);
 
+  // v0.14.3.1: refresh on mount so the dropdown reflects the same
+  // active-plan truth /app/plans shows. Both surfaces read the
+  // `plans` slice from the global store, but the store hydrates
+  // once at provider mount — a tab opened before another tab
+  // toggled a plan would otherwise hold stale state. Refreshing
+  // here guarantees the operator never sees a deactivated plan in
+  // this dropdown.
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
   const selected = selectedId
     ? activePlans.find((p) => p.id === selectedId) ?? null
     : null;
