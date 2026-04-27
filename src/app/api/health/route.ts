@@ -4,7 +4,7 @@ export function GET() {
   return NextResponse.json({
     status: "ok",
     system: "studioflow",
-    version: "v0.14.2",
-    release: "Edit Existing Plans + Safer Operator Controls",
+    version: "v0.14.3",
+    release: "Operator Purchase Preview + Test Purchase Panel",
   });
 }
