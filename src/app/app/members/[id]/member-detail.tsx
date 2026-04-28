@@ -67,6 +67,9 @@ const LEDGER_REASON_LABELS: Record<string, string> = {
   auto_promotion: "Auto-promotion",
   manual_promotion: "Manual promotion",
   unpromote_refund: "Unpromote refund",
+  // v0.16.0: purchase refund — written by sf_refund_purchase. Negative
+  // delta equal to the refunded purchase's credits_granted.
+  purchase_refund: "Purchase refunded",
   bereavement: "Manual adjustment",
   medical: "Manual adjustment",
   studio_error: "Manual adjustment",
@@ -707,8 +710,19 @@ function RecentPurchasesPanel({
   memberSlug: string;
   plans: Plan[];
 }) {
-  const { getPurchases, members } = useStore();
+  const { getPurchases, members, refresh } = useStore();
   const [entries, setEntries] = useState<PurchaseRecord[] | null>(null);
+  // v0.16.0: per-row UI state. confirmingId is the purchase row
+  // currently in "Confirm refund?" mode; refundingRef.current is the
+  // purchase id whose refund POST is in flight (synchronous guard
+  // matching the v0.15.1 double-submit pattern). feedbackById carries
+  // the most recent ok/error message per row so a refund result is
+  // visible without dismissing the confirm UI.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [feedbackById, setFeedbackById] = useState<
+    Record<string, { kind: "ok"; text: string } | { kind: "error"; text: string }>
+  >({});
+  const refundingRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -722,6 +736,69 @@ function RecentPurchasesPanel({
     // triggers a store refresh, which changes `members`, which
     // re-runs this and picks up the new row).
   }, [getPurchases, memberSlug, members]);
+
+  async function handleRefund(purchase: PurchaseRecord) {
+    // v0.16.0: synchronous double-submit guard. State updates are
+    // async — between two rapid clicks both invocations could pass a
+    // React-state check before either has seen the other's set. The
+    // ref mutates synchronously and closes that window so a refund
+    // POST is never fired twice for one row.
+    if (refundingRef.current !== null) return;
+    refundingRef.current = purchase.id;
+    setFeedbackById((f) => {
+      const next = { ...f };
+      delete next[purchase.id];
+      return next;
+    });
+    try {
+      const resp = await fetch("/api/admin/refund-purchase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purchaseId: purchase.id }),
+      });
+      const data = (await resp.json().catch(() => null)) as
+        | {
+            ok: true;
+            alreadyRefunded?: boolean;
+            refundedCredits?: number;
+            newBalance?: number;
+          }
+        | { ok: false; code?: string; error?: string }
+        | null;
+      if (!data) {
+        setFeedbackById((f) => ({
+          ...f,
+          [purchase.id]: { kind: "error", text: `Refund failed (${resp.status})` },
+        }));
+        return;
+      }
+      if (!data.ok) {
+        setFeedbackById((f) => ({
+          ...f,
+          [purchase.id]: {
+            kind: "error",
+            text: data.error ?? "Refund failed",
+          },
+        }));
+        return;
+      }
+      const text = data.alreadyRefunded
+        ? "Already refunded — no change."
+        : `Refunded ${data.refundedCredits ?? 0} credit${
+            data.refundedCredits === 1 ? "" : "s"
+          } · balance now ${data.newBalance ?? "?"}`;
+      setFeedbackById((f) => ({
+        ...f,
+        [purchase.id]: { kind: "ok", text },
+      }));
+      setConfirmingId(null);
+      // Re-hydrate so the Membership / Credit history / Purchase
+      // history panels pick up the new state.
+      await refresh();
+    } finally {
+      refundingRef.current = null;
+    }
+  }
 
   if (!entries) return null;
   if (entries.length === 0) {
@@ -761,6 +838,18 @@ function RecentPurchasesPanel({
           e.priceCentsPaid === null
             ? "—"
             : formatPriceEur(e.priceCentsPaid);
+        // v0.16.0 refund eligibility — class_pack only, completed only,
+        // credits_granted recorded so we know the refund amount. UI
+        // guard; the server re-enforces all three rules in
+        // sf_refund_purchase.
+        const refundable =
+          e.status === "completed" &&
+          plan?.type === "class_pack" &&
+          typeof e.creditsGranted === "number" &&
+          e.creditsGranted > 0;
+        const isConfirming = confirmingId === e.id;
+        const feedback = feedbackById[e.id];
+        const isRefunding = refundingRef.current === e.id;
         return (
           <li
             key={e.id}
@@ -794,6 +883,62 @@ function RecentPurchasesPanel({
                 {formatRelative(new Date(e.createdAt).getTime(), now)}
               </span>
             </div>
+            {refundable && !isConfirming && (
+              <div className="mt-2 flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => setConfirmingId(e.id)}
+                  className="rounded border border-white/20 px-2 py-1 text-[11px] text-white/60 hover:text-white hover:border-white/40"
+                >
+                  Refund
+                </button>
+              </div>
+            )}
+            {isConfirming && (
+              <div
+                className="mt-2 flex flex-col gap-2 rounded border border-amber-400/40 bg-amber-400/5 px-3 py-2"
+                role="alertdialog"
+                aria-label="Confirm purchase refund"
+              >
+                <p className="text-xs text-amber-200/90">
+                  Refund this purchase and remove{" "}
+                  <strong className="font-semibold">
+                    {e.creditsGranted} credit
+                    {e.creditsGranted === 1 ? "" : "s"}
+                  </strong>{" "}
+                  from this member?
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleRefund(e)}
+                    disabled={isRefunding}
+                    className="rounded border border-amber-400/50 px-2.5 py-1 text-xs text-amber-200 hover:bg-amber-400/10 disabled:opacity-30"
+                  >
+                    {isRefunding ? "Refunding…" : "Confirm refund"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingId(null)}
+                    disabled={isRefunding}
+                    className="rounded border border-white/20 px-2.5 py-1 text-xs text-white/60 hover:text-white hover:border-white/40 disabled:opacity-30"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+            {feedback && (
+              <p
+                className={`mt-2 text-[11px] ${
+                  feedback.kind === "error"
+                    ? "text-red-400/90"
+                    : "text-green-400/80"
+                }`}
+              >
+                {feedback.text}
+              </p>
+            )}
           </li>
         );
       })}

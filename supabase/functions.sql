@@ -1298,3 +1298,122 @@ BEGIN
   END IF;
 END;
 $$;
+
+-- ═══ sf_refund_purchase — v0.16.0 ════════════════════════════════════
+-- Class-pack refund flow. Reverses a completed purchase by flipping
+-- purchases.status to 'refunded', decrementing members.credits_remaining
+-- by the recorded credits_granted, and writing a ledger row with
+-- reason_code='purchase_refund'. Idempotent — a duplicate call after
+-- success returns { ok:true, already_refunded:true } without mutating
+-- state. Full docs + safety rationale: supabase/v0.16.0_migration.sql.
+CREATE OR REPLACE FUNCTION sf_refund_purchase(p_purchase_id uuid)
+RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  v_purchase     RECORD;
+  v_plan         RECORD;
+  v_balance      integer;
+  v_new_balance  integer;
+  v_ledger_id    uuid;
+BEGIN
+  SELECT id, member_id, plan_id, source, status,
+         price_cents_paid, credits_granted, external_id, created_at
+    INTO v_purchase
+    FROM purchases
+    WHERE id = p_purchase_id
+    FOR UPDATE;
+  IF v_purchase IS NULL THEN
+    RETURN jsonb_build_object(
+      'ok', false,
+      'code', 'not_found',
+      'error', 'Purchase not found: ' || p_purchase_id::text
+    );
+  END IF;
+
+  IF v_purchase.status <> 'completed' THEN
+    RETURN jsonb_build_object(
+      'ok', true,
+      'already_refunded', true,
+      'status', v_purchase.status,
+      'purchase_id', v_purchase.id
+    );
+  END IF;
+
+  SELECT id, type, credits, price_cents
+    INTO v_plan
+    FROM plans
+    WHERE id = v_purchase.plan_id;
+  IF v_plan IS NULL THEN
+    RETURN jsonb_build_object(
+      'ok', false,
+      'code', 'plan_not_found',
+      'error', 'Plan not found for purchase: ' || v_purchase.plan_id
+    );
+  END IF;
+
+  IF v_plan.type <> 'class_pack' THEN
+    RETURN jsonb_build_object(
+      'ok', false,
+      'code', 'unsupported_plan_type',
+      'plan_type', v_plan.type,
+      'error',
+        'Refund not supported for plan type: ' || v_plan.type
+        || '. v0.16.0 supports class_pack refunds only.'
+    );
+  END IF;
+
+  IF v_purchase.credits_granted IS NULL THEN
+    RETURN jsonb_build_object(
+      'ok', false,
+      'code', 'no_credits_granted_recorded',
+      'error',
+        'Purchase has no credits_granted recorded — '
+        || 'cannot determine refund amount.'
+    );
+  END IF;
+
+  SELECT credits_remaining INTO v_balance
+    FROM members
+    WHERE id = v_purchase.member_id
+    FOR UPDATE;
+  IF v_balance IS NULL OR v_balance < v_purchase.credits_granted THEN
+    RETURN jsonb_build_object(
+      'ok', false,
+      'code', 'insufficient_credits_to_refund',
+      'credits_remaining', v_balance,
+      'credits_to_refund', v_purchase.credits_granted,
+      'error',
+        'Member has used some of the credits granted by this '
+        || 'purchase already. Cannot refund without going negative.'
+    );
+  END IF;
+
+  UPDATE purchases SET status = 'refunded' WHERE id = v_purchase.id;
+
+  UPDATE members
+    SET credits_remaining = credits_remaining - v_purchase.credits_granted,
+        updated_at = now()
+    WHERE id = v_purchase.member_id
+    RETURNING credits_remaining INTO v_new_balance;
+
+  INSERT INTO credit_transactions (
+    member_id, delta, balance_after, reason_code, source, note
+  ) VALUES (
+    v_purchase.member_id,
+    -v_purchase.credits_granted,
+    v_new_balance,
+    'purchase_refund',
+    'system',
+    'Refund of purchase ' || v_purchase.external_id
+  ) RETURNING id INTO v_ledger_id;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'already_refunded', false,
+    'purchase_id', v_purchase.id,
+    'external_id', v_purchase.external_id,
+    'refunded_credits', v_purchase.credits_granted,
+    'new_balance', v_new_balance,
+    'ledger_id', v_ledger_id
+  );
+END;
+$$;
