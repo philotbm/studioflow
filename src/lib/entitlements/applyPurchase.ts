@@ -63,7 +63,9 @@ export type ApplyPurchaseErr = {
     | "inactive_plan"
     | "no_supabase"
     | "rpc_error"
-    | "unexpected_response";
+    | "unexpected_response"
+    /** v0.15.1: source CHECK violation — v0.15.0 migration not applied. */
+    | "source_check_violation";
 };
 
 export type ApplyPurchaseResult = ApplyPurchaseOk | ApplyPurchaseErr;
@@ -100,12 +102,18 @@ export async function applyPurchase(
     };
   }
 
-  // v0.15.0: try the new source vocabulary first. If the DB CHECK
-  // constraint hasn't been widened yet (i.e. the v0.15.0 migration
-  // hasn't been applied), fall back to the legacy 'fake' source so the
-  // purchase still completes correctly. Stripe is always allowed by
-  // the old constraint and never needs the fallback.
-  let rpcResult = await client.rpc("sf_apply_purchase", {
+  // v0.15.1: call sf_apply_purchase with the canonical source vocabulary.
+  // The earlier silent fallback to legacy 'fake' on a CHECK violation
+  // (v0.15.0) was removed: it masked an unmigrated DB by writing
+  // misleading rows that diagnostics couldn't distinguish from genuine
+  // pre-v0.15.0 history. Now: if the v0.15.0 migration hasn't been
+  // applied to this environment, the purchase fails loudly with a
+  // structured `source_check_violation` code. Operators see a clear
+  // error in the test-purchase panel; the Stripe webhook returns 500
+  // and Stripe retries. Genuine historical 'fake' rows are unaffected
+  // — the CHECK constraint still accepts 'fake' for read, and no code
+  // path here writes that value any more.
+  const { data, error } = await client.rpc("sf_apply_purchase", {
     p_member_id: input.memberId,
     p_plan_id: plan.id,
     p_plan_type: plan.type,
@@ -115,31 +123,20 @@ export async function applyPurchase(
     p_external_id: input.externalId,
   });
 
-  if (
-    rpcResult.error &&
-    rpcResult.error.code === "23514" &&
-    input.source !== "stripe"
-  ) {
-    // CHECK violation on the source column — pre-v0.15.0 DB. Retry
-    // with the legacy 'fake' source so a successful payment doesn't
-    // get reported as a failed purchase.
-    console.warn(
-      "[applyPurchase] source CHECK violation, falling back to 'fake':",
-      rpcResult.error.message,
-    );
-    rpcResult = await client.rpc("sf_apply_purchase", {
-      p_member_id: input.memberId,
-      p_plan_id: plan.id,
-      p_plan_type: plan.type,
-      p_plan_name: plan.name,
-      p_credits: plan.credits ?? 0,
-      p_source: "fake",
-      p_external_id: input.externalId,
-    });
-  }
-
-  const { data, error } = rpcResult;
   if (error) {
+    if (error.code === "23514") {
+      console.error(
+        "[applyPurchase] source CHECK violation — v0.15.0 migration is not applied on this DB:",
+        error.message,
+      );
+      return {
+        ok: false,
+        error:
+          "Purchase rejected: the database hasn't been upgraded to v0.15.0. " +
+          "Apply supabase/v0.15.0_migration.sql and retry.",
+        code: "source_check_violation",
+      };
+    }
     console.error("[applyPurchase] sf_apply_purchase failed:", error.message);
     return { ok: false, error: error.message, code: "rpc_error" };
   }
