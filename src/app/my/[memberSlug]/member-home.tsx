@@ -545,37 +545,42 @@ function MemberPurchaseHistorySection({
                   : `${e.creditsGranted} credits added`;
 
             return (
-              <li
-                key={e.id}
-                className="rounded border border-white/10 px-4 py-2.5"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <span className="text-sm font-medium">{planLabel}</span>
-                  <span
-                    className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${statusTone}`}
-                  >
-                    {statusLabel}
-                  </span>
-                </div>
-                {isLegacy ? (
-                  <div className="mt-1 flex flex-col gap-0.5">
-                    <span className="text-[11px] text-white/50">
-                      Older purchase record
-                    </span>
-                    <span className="text-[11px] text-white/30">
-                      Full receipt details unavailable
+              <li key={e.id}>
+                {/* v0.18.1: each row is a link to the receipt detail
+                    page. Whole-row clickable so phone tap targets are
+                    forgiving. */}
+                <Link
+                  href={`/my/${memberSlug}/purchases/${e.id}`}
+                  className="block rounded border border-white/10 px-4 py-2.5 hover:border-white/30 hover:bg-white/[0.02] focus-visible:border-white/40 focus-visible:outline-none"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-sm font-medium">{planLabel}</span>
+                    <span
+                      className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${statusTone}`}
+                    >
+                      {statusLabel}
                     </span>
                   </div>
-                ) : (
-                  <p className="mt-1 text-[11px] text-white/40">
-                    {priceText && entitlementText
-                      ? `${priceText} · ${entitlementText}`
-                      : priceText ?? entitlementText ?? ""}
+                  {isLegacy ? (
+                    <div className="mt-1 flex flex-col gap-0.5">
+                      <span className="text-[11px] text-white/50">
+                        Older purchase record
+                      </span>
+                      <span className="text-[11px] text-white/30">
+                        Full receipt details unavailable
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-[11px] text-white/40">
+                      {priceText && entitlementText
+                        ? `${priceText} · ${entitlementText}`
+                        : priceText ?? entitlementText ?? ""}
+                    </p>
+                  )}
+                  <p className="mt-1 text-[11px] text-white/30">
+                    {memberDateLabel(e.createdAt, now)}
                   </p>
-                )}
-                <p className="mt-1 text-[11px] text-white/30">
-                  {memberDateLabel(e.createdAt, now)}
-                </p>
+                </Link>
               </li>
             );
           })}
