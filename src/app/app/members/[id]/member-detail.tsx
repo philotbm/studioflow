@@ -703,12 +703,105 @@ const PURCHASE_STATUS_TONES: Record<string, string> = {
   cancelled: "border-white/20 text-white/40",
 };
 
+/**
+ * v0.16.1: per-row refund state. The UI is advisory only — the RPC
+ * (sf_refund_purchase) re-enforces every condition server-side, so a
+ * row that the UI shows as refundable but the server rejects (e.g.
+ * a race where the member just spent a credit) flows through the
+ * normal error path. This type lets the row render exactly one
+ * canonical message instead of computing a hidden boolean and
+ * leaving the operator guessing why the button is missing.
+ */
+type RefundState =
+  | { kind: "available"; creditsToRefund: number }
+  | { kind: "already_refunded" }
+  | { kind: "unlimited" }
+  | { kind: "legacy_no_credits" }
+  | {
+      kind: "insufficient_credits";
+      creditsRemaining: number;
+      creditsToRefund: number;
+    }
+  | { kind: "plan_unknown" }
+  | { kind: "non_refundable_status"; status: string };
+
+function deriveRefundState(
+  purchase: PurchaseRecord,
+  plan: Plan | null,
+  memberCreditsRemaining: number | null,
+): RefundState {
+  if (purchase.status === "refunded") return { kind: "already_refunded" };
+  if (purchase.status !== "completed") {
+    return { kind: "non_refundable_status", status: purchase.status };
+  }
+  if (!plan) return { kind: "plan_unknown" };
+  if (plan.type === "unlimited") return { kind: "unlimited" };
+  if (purchase.creditsGranted == null) return { kind: "legacy_no_credits" };
+  // class_pack with credits_granted recorded. For an unlimited member
+  // (credits === null) the class-pack credit column is effectively 0,
+  // so refund refused via insufficient_credits — same outcome the
+  // server would return.
+  const remaining = memberCreditsRemaining ?? 0;
+  if (remaining < purchase.creditsGranted) {
+    return {
+      kind: "insufficient_credits",
+      creditsRemaining: remaining,
+      creditsToRefund: purchase.creditsGranted,
+    };
+  }
+  return { kind: "available", creditsToRefund: purchase.creditsGranted };
+}
+
+function refundStateCopy(state: RefundState): string {
+  switch (state.kind) {
+    case "available":
+      return `Can refund: removes ${state.creditsToRefund} credit${
+        state.creditsToRefund === 1 ? "" : "s"
+      }`;
+    case "already_refunded":
+      return "Already refunded";
+    case "unlimited":
+      return "Unlimited refunds need separate handling";
+    case "legacy_no_credits":
+      return "Refund unavailable: legacy purchase has no recorded credits";
+    case "insufficient_credits":
+      return `Refund unavailable: member has only ${state.creditsRemaining} credit${
+        state.creditsRemaining === 1 ? "" : "s"
+      }`;
+    case "plan_unknown":
+      return "Refund unavailable: plan could not be resolved";
+    case "non_refundable_status":
+      return `Refund unavailable: status is "${state.status}"`;
+  }
+}
+
+/**
+ * v0.16.1: plain-English mapping for sf_refund_purchase / refund
+ * route error codes. Anything not in this map falls back to the raw
+ * error string so a future code addition is still informative.
+ */
+const REFUND_ERROR_LABELS: Record<string, string> = {
+  insufficient_credits_to_refund:
+    "Refund refused: member has used some of these credits already.",
+  unsupported_plan_type:
+    "Refund refused: unlimited plan refunds aren't supported yet.",
+  no_credits_granted_recorded:
+    "Refund refused: this legacy purchase has no recorded credits, so the refund amount is unknown.",
+  plan_not_found:
+    "Refund refused: this purchase's plan could not be resolved.",
+  rpc_missing:
+    "Refund refused: the v0.16.0 database migration isn't applied on this environment.",
+  not_found: "Refund refused: purchase not found.",
+};
+
 function RecentPurchasesPanel({
   memberSlug,
   plans,
+  memberCreditsRemaining,
 }: {
   memberSlug: string;
   plans: Plan[];
+  memberCreditsRemaining: number | null;
 }) {
   const { getPurchases, members, refresh } = useStore();
   const [entries, setEntries] = useState<PurchaseRecord[] | null>(null);
@@ -773,20 +866,25 @@ function RecentPurchasesPanel({
         return;
       }
       if (!data.ok) {
+        const code = data.code ?? "";
+        const labelled = code ? REFUND_ERROR_LABELS[code] : undefined;
         setFeedbackById((f) => ({
           ...f,
           [purchase.id]: {
             kind: "error",
-            text: data.error ?? "Refund failed",
+            text: labelled ?? data.error ?? "Refund failed",
           },
         }));
         return;
       }
+      // v0.16.1 success copy. Brief specifies:
+      //   success      → "Refunded X credits; balance now Y"
+      //   already      → "Purchase was already refunded"
       const text = data.alreadyRefunded
-        ? "Already refunded — no change."
+        ? "Purchase was already refunded"
         : `Refunded ${data.refundedCredits ?? 0} credit${
             data.refundedCredits === 1 ? "" : "s"
-          } · balance now ${data.newBalance ?? "?"}`;
+          }; balance now ${data.newBalance ?? "?"}`;
       setFeedbackById((f) => ({
         ...f,
         [purchase.id]: { kind: "ok", text },
@@ -838,15 +936,15 @@ function RecentPurchasesPanel({
           e.priceCentsPaid === null
             ? "—"
             : formatPriceEur(e.priceCentsPaid);
-        // v0.16.0 refund eligibility — class_pack only, completed only,
-        // credits_granted recorded so we know the refund amount. UI
-        // guard; the server re-enforces all three rules in
-        // sf_refund_purchase.
-        const refundable =
-          e.status === "completed" &&
-          plan?.type === "class_pack" &&
-          typeof e.creditsGranted === "number" &&
-          e.creditsGranted > 0;
+        // v0.16.1: derive a single explicit refund-state per row and
+        // render its canonical helper copy. Replaces the prior
+        // boolean (which silently hid the button on every
+        // unsupported case and left the operator guessing why).
+        // Server (sf_refund_purchase) re-enforces every condition;
+        // this is advisory only.
+        const refundState = deriveRefundState(e, plan ?? null, memberCreditsRemaining);
+        const refundCopy = refundStateCopy(refundState);
+        const refundable = refundState.kind === "available";
         const isConfirming = confirmingId === e.id;
         const feedback = feedbackById[e.id];
         const isRefunding = refundingRef.current === e.id;
@@ -883,15 +981,20 @@ function RecentPurchasesPanel({
                 {formatRelative(new Date(e.createdAt).getTime(), now)}
               </span>
             </div>
-            {refundable && !isConfirming && (
-              <div className="mt-2 flex items-center justify-end">
-                <button
-                  type="button"
-                  onClick={() => setConfirmingId(e.id)}
-                  className="rounded border border-white/20 px-2 py-1 text-[11px] text-white/60 hover:text-white hover:border-white/40"
-                >
-                  Refund
-                </button>
+            {!isConfirming && (
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <span className="text-[11px] text-white/40">
+                  {refundCopy}
+                </span>
+                {refundable && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingId(e.id)}
+                    className="shrink-0 rounded border border-white/20 px-2 py-1 text-[11px] text-white/60 hover:text-white hover:border-white/40"
+                  >
+                    Refund
+                  </button>
+                )}
               </div>
             )}
             {isConfirming && (
@@ -1488,7 +1591,11 @@ export default function MemberDetail({ id }: { id: string }) {
           Newest first.
         </p>
         <div className="mt-3">
-          <RecentPurchasesPanel memberSlug={member.id} plans={plans} />
+          <RecentPurchasesPanel
+            memberSlug={member.id}
+            plans={plans}
+            memberCreditsRemaining={member.credits}
+          />
         </div>
       </div>
 
