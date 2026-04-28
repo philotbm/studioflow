@@ -433,6 +433,17 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
   const [busyPlanId, setBusyPlanId] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
 
+  // v0.15.1 double-submit guard. The React `busyPlanId` state is what
+  // disables the buttons in the rendered DOM, but state updates are
+  // async — between two rapid clicks (e.g. a double-tap before paint)
+  // both invocations of handleBuy can pass `if (busyPlanId)` because
+  // neither has seen the setBusyPlanId from the other yet. The ref
+  // closes that window: it mutates synchronously, so the second call
+  // sees the in-flight plan id immediately and bails. The button is
+  // still disabled visually via `busyPlanId`; the ref is the integrity
+  // backstop.
+  const buyInFlightRef = useRef<string | null>(null);
+
   // Today's date, computed once per client mount. Memoized so it
   // doesn't retrigger on every outcome/busy change.
   const today = useMemo(() => todayLabel(new Date()), []);
@@ -684,7 +695,10 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
   //      and returns the new credits_remaining. Show the
   //      purchase_fake outcome card and refresh the store.
   async function handleBuy(plan: Plan) {
-    if (!member || busyPlanId) return;
+    if (!member) return;
+    // v0.15.1: synchronous double-submit guard. See buyInFlightRef.
+    if (buyInFlightRef.current !== null) return;
+    buyInFlightRef.current = plan.id;
     setBusyPlanId(plan.id);
     setOutcome(null);
     try {
@@ -760,6 +774,7 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
         text: e instanceof Error ? e.message : "Checkout failed",
       });
     } finally {
+      buyInFlightRef.current = null;
       setBusyPlanId(null);
     }
   }

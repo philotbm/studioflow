@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMember, useStore, usePlans, formatRelative } from "@/lib/store";
 import type { LedgerEntry, ManualAdjustReason, PurchaseRecord } from "@/lib/db";
 import { MANUAL_ADJUST_REASONS } from "@/lib/db";
@@ -443,6 +443,14 @@ function TestPurchasePanel({
   const activePlans = plans.filter((p) => p.active);
   const [selectedId, setSelectedId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+  // v0.15.1 double-submit guard. setSubmitting is async — between two
+  // rapid clicks both calls of handleConfirm can pass `if (submitting)`
+  // before either has seen the other's setSubmitting(true). The ref
+  // mutates synchronously and closes that window. The button's
+  // `disabled={submitting}` is still the primary visual gate; this is
+  // the integrity backstop so a double-click can never produce two
+  // operator-test purchases for the same operator action.
+  const inFlightRef = useRef<boolean>(false);
   const [result, setResult] = useState<
     | null
     | {
@@ -478,7 +486,10 @@ function TestPurchasePanel({
   }, [selectedId]);
 
   async function handleConfirm() {
-    if (!selected || submitting) return;
+    if (!selected) return;
+    // v0.15.1: synchronous double-submit guard. See inFlightRef.
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setSubmitting(true);
     setResult(null);
     try {
@@ -525,6 +536,7 @@ function TestPurchasePanel({
       // panels show the new row and the new balance.
       await refresh();
     } finally {
+      inFlightRef.current = false;
       setSubmitting(false);
     }
   }
