@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { formatPriceEur } from "@/lib/plans";
+import { sourceDisplayLabel } from "@/lib/revenue";
 
 /**
  * v0.17.1 Revenue page with date-range filter.
@@ -60,17 +61,6 @@ function isRangeKey(s: string | null): s is RangeKey {
   return (
     s === "lifetime" || s === "today" || s === "last7" || s === "last30"
   );
-}
-
-const SOURCE_LABELS: Record<string, string> = {
-  stripe: "Stripe",
-  dev_fake: "Test purchase (no Stripe)",
-  operator_manual: "Operator test purchase",
-  fake: "Test purchase (legacy)",
-};
-
-function sourceLabel(s: string): string {
-  return SOURCE_LABELS[s] ?? s;
 }
 
 function RevenueCard({
@@ -183,8 +173,26 @@ function RevenueContent() {
         counted separately below.
       </p>
 
-      <div className="mt-4">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <RangeButtons active={range} />
+        {/*
+          v0.17.2: Export CSV. Direct anchor (not next/link) because
+          Next.js's client navigation would intercept the URL and try
+          to render a route — we want the browser to follow the link
+          as a normal download with the Content-Disposition header.
+          `download` is a hint; the server's filename header wins.
+        */}
+        <a
+          href={
+            range === "lifetime"
+              ? "/api/admin/revenue/export"
+              : `/api/admin/revenue/export?range=${range}`
+          }
+          download
+          className="rounded border border-white/20 px-3 py-1.5 text-xs text-white/70 hover:text-white hover:border-white/40"
+        >
+          Export CSV
+        </a>
       </div>
 
       {error && (
@@ -305,7 +313,7 @@ function RevenueContent() {
                           className="border-b border-white/5 last:border-b-0"
                         >
                           <td className="px-3 py-2 text-white/80">
-                            {sourceLabel(row.source)}
+                            {sourceDisplayLabel(row.source)}
                           </td>
                           <td className="px-3 py-2 text-right text-white/70">
                             {row.countCompleted}
