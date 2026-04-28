@@ -1060,6 +1060,77 @@ export async function fetchMemberPurchases(
   }));
 }
 
+// v0.18.2: direct purchase lookup. Used by the member receipt detail
+// page so a direct link works for any of the member's purchases, not
+// just the newest 10 the list shows.
+//
+// Two-step guard: resolve the member by slug, then filter the
+// purchase by both id AND member_id. The composite filter is what
+// stops a malicious URL from leaking a purchase row that belongs to
+// a different member — Postgres returns no row when member_id
+// doesn't match, even if the id is valid for somebody else.
+//
+// Returns null when:
+//   - memberSlug doesn't resolve to a member
+//   - purchaseId doesn't parse as a uuid (caught locally so we don't
+//     hit Postgres with a 22P02)
+//   - the purchase id exists but belongs to a different member
+//   - the purchase doesn't exist at all
+const PURCHASE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function fetchPurchaseForMember(
+  memberSlug: string,
+  purchaseId: string,
+): Promise<PurchaseRecord | null> {
+  if (!PURCHASE_UUID_RE.test(purchaseId)) return null;
+
+  const { data: mem } = await requireClient()
+    .from("members")
+    .select("id")
+    .eq("slug", memberSlug)
+    .single();
+  if (!mem) return null;
+
+  const { data, error } = await requireClient()
+    .from("purchases")
+    .select(
+      "id, plan_id, source, external_id, status, price_cents_paid, credits_granted, created_at",
+    )
+    .eq("id", purchaseId)
+    .eq("member_id", mem.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error(
+      "[fetchPurchaseForMember] query failed:",
+      error.message,
+    );
+    return null;
+  }
+  if (!data) return null;
+  const r = data as {
+    id: string;
+    plan_id: string;
+    source: PurchaseSourceRecorded;
+    external_id: string;
+    status: PurchaseStatus;
+    price_cents_paid: number | null;
+    credits_granted: number | null;
+    created_at: string;
+  };
+  return {
+    id: r.id,
+    planId: r.plan_id,
+    source: r.source,
+    externalId: r.external_id,
+    status: r.status,
+    priceCentsPaid: r.price_cents_paid,
+    creditsGranted: r.credits_granted,
+    createdAt: r.created_at,
+  };
+}
+
 // ── v0.14.0: plan catalogue reader (client-side) ───────────────────
 
 type PlanRowShape = {

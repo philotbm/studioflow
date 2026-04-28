@@ -25,6 +25,7 @@ import {
   adjustMemberCredit as dbAdjust,
   fetchRecentLedgerEntries as dbLedger,
   fetchMemberPurchases as dbPurchases,
+  fetchPurchaseForMember as dbPurchaseForMember,
   markAttendance as dbMarkAttendance,
   checkInMember as dbCheckInMember,
   finaliseClass as dbFinaliseClass,
@@ -101,6 +102,14 @@ type StoreContextValue = {
   getLedger: (memberSlug: string, limit?: number) => Promise<LedgerEntry[]>;
   /** v0.13.1: recent purchases for a member, newest-first. Reads the v0.13.0 `purchases` table. */
   getPurchases: (memberSlug: string, limit?: number) => Promise<PurchaseRecord[]>;
+  /** v0.18.2: direct purchase-by-id lookup, scoped to a member. Returns
+   *  null if the purchase doesn't exist, doesn't belong to this member,
+   *  or the slug doesn't resolve. Used by the receipt detail page so a
+   *  direct link works regardless of position in the newest-N list. */
+  getPurchaseForMember: (
+    memberSlug: string,
+    purchaseId: string,
+  ) => Promise<PurchaseRecord | null>;
   /** v0.8.3: attendance correction (checked_in / no_show / booked). */
   markAttendance: (
     classSlug: string,
@@ -236,6 +245,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const getPurchaseForMember = useCallback(
+    (memberSlug: string, purchaseId: string) =>
+      dbPurchaseForMember(memberSlug, purchaseId),
+    [],
+  );
+
   const doMarkAttendance = useCallback(
     async (
       classSlug: string,
@@ -317,6 +332,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       adjustCredit: doAdjust,
       getLedger,
       getPurchases,
+      getPurchaseForMember,
       markAttendance: doMarkAttendance,
       checkInMember: doCheckInMember,
       finaliseClass: doFinaliseClass,
@@ -326,8 +342,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       classes, members, plans, loading, error, hydrated,
       getClass, getMember, getAuditEvents,
       doBook, doCancel, promoteEntry, doUnpromote, doCheckIn,
-      doAdjust, getLedger, getPurchases, doMarkAttendance,
-      doCheckInMember, doFinaliseClass, loadData,
+      doAdjust, getLedger, getPurchases, getPurchaseForMember,
+      doMarkAttendance, doCheckInMember, doFinaliseClass, loadData,
     ],
   );
 

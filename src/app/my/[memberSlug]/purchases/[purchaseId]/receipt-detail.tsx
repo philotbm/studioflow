@@ -7,22 +7,25 @@ import type { PurchaseRecord } from "@/lib/db";
 import { findPlan, formatPriceEur } from "@/lib/plans";
 
 /**
- * v0.18.1 Member receipt detail.
+ * v0.18.2 Member receipt detail.
  *
- * Customer-safe receipt for a single purchase. Reads via the same
- * store action (getPurchases) the v0.18.0 list uses, so the two
- * surfaces never drift. Strict guardrails: never renders source,
- * external_id, or any internal vocabulary into the DOM.
+ * Customer-safe receipt for a single purchase. v0.18.2 switched the
+ * data path from the list-style getPurchases (newest-10) to a
+ * direct-lookup store action getPurchaseForMember(slug, id), so a
+ * receipt URL works regardless of position in the member's history.
+ *
+ * Ownership guard lives in the db helper: the lookup filters by
+ * BOTH purchases.id AND members.id-by-slug, so a URL that matches
+ * a real purchase id but belongs to a different member resolves to
+ * null and renders the same "Purchase not found" page. Membership
+ * is enforced server-side, not just by URL convention.
+ *
+ * Strict UI guardrails (unchanged from v0.18.1): never renders
+ * source, external_id, or any internal vocabulary into the DOM.
  *
  * Refund + legacy presentation reuses the same conventions as the
  * v0.18.0 list: amber pill for refunded, "Older purchase record"
  * fallback for pre-v0.15.0 rows with NULL economics.
- *
- * Uses the same default getPurchases limit (10) as the list page
- * for consistency. Receipts for purchases older than the 10 most
- * recent will resolve to "Purchase not found" — minor edge case for
- * direct-link users; the in-product path always lands inside the
- * list. Documented in the release notes.
  */
 
 const STATUS_LABELS: Record<string, string> = {
@@ -76,6 +79,11 @@ function BackLink({ memberSlug }: { memberSlug: string }) {
   );
 }
 
+// Loading sentinel distinct from "lookup completed but null". Three
+// states: undefined (still fetching), null (definitively not found
+// for this member), PurchaseRecord (resolved).
+type ReceiptState = PurchaseRecord | null | undefined;
+
 export default function ReceiptDetail({
   memberSlug,
   purchaseId,
@@ -83,24 +91,26 @@ export default function ReceiptDetail({
   memberSlug: string;
   purchaseId: string;
 }) {
-  const { getPurchases, members } = useStore();
+  const { getPurchaseForMember, members } = useStore();
   const plans = usePlans();
-  const [entries, setEntries] = useState<PurchaseRecord[] | null>(null);
+  const [purchase, setPurchase] = useState<ReceiptState>(undefined);
 
   useEffect(() => {
     let cancelled = false;
-    getPurchases(memberSlug).then((rows) => {
-      if (!cancelled) setEntries(rows);
+    setPurchase(undefined);
+    getPurchaseForMember(memberSlug, purchaseId).then((row) => {
+      if (!cancelled) setPurchase(row);
     });
     return () => {
       cancelled = true;
     };
     // Refetch on members collection change so a refund fired from
     // another tab is reflected next time this page is visited /
-    // re-rendered.
-  }, [getPurchases, memberSlug, members]);
+    // re-rendered. memberSlug/purchaseId in the deps cover the
+    // primary case.
+  }, [getPurchaseForMember, memberSlug, purchaseId, members]);
 
-  if (entries === null) {
+  if (purchase === undefined) {
     return (
       <main className="mx-auto max-w-2xl">
         <BackLink memberSlug={memberSlug} />
@@ -109,8 +119,7 @@ export default function ReceiptDetail({
     );
   }
 
-  const purchase = entries.find((p) => p.id === purchaseId);
-  if (!purchase) {
+  if (purchase === null) {
     return (
       <main className="mx-auto max-w-2xl">
         <BackLink memberSlug={memberSlug} />
@@ -118,8 +127,8 @@ export default function ReceiptDetail({
           Purchase not found
         </h1>
         <p className="mt-2 text-sm text-white/50">
-          We couldn&apos;t find a purchase with that reference. It may
-          be older than the most recent ten on your account.
+          We couldn&apos;t find a purchase with that reference on your
+          account.
         </p>
       </main>
     );
