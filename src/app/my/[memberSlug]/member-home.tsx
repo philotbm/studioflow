@@ -160,10 +160,12 @@ function OutcomeCard({
         return `Added to waitlist — ${outcome.className}`;
       case "already-in":
         return `You're already in ${outcome.className}`;
+      // v0.19.0: cancellation outcomes use a single member-facing
+      // headline. Class context moves into the detail line so the
+      // headline reads as a clear status statement, not a label.
       case "cancelled":
-        return `Cancelled — ${outcome.className}`;
       case "late-cancel":
-        return `Late cancel — ${outcome.className}`;
+        return "Your booking has been cancelled";
       case "blocked":
         return `Can't book ${outcome.className}`;
       case "purchase_success":
@@ -186,11 +188,13 @@ function OutcomeCard({
       case "already-in":
         return outcome.when;
       case "cancelled":
+        // v0.19.0: brief-aligned. Always names the class, then the
+        // credit outcome (if any).
         return outcome.creditRestored
-          ? `${outcome.when} · 1 credit restored`
-          : outcome.when;
+          ? `${outcome.className} · ${outcome.when} — 1 credit has been returned to your account`
+          : `${outcome.className} · ${outcome.when}`;
       case "late-cancel":
-        return `${outcome.when} · No credit returned (cancelled after the window)`;
+        return `${outcome.className} · ${outcome.when} — This was a late cancellation, no credit returned`;
       case "blocked":
         return `${outcome.reason}. ${outcome.hint}`;
       case "purchase_success":
@@ -208,23 +212,41 @@ function OutcomeCard({
     }
   })();
 
+  // v0.19.0: re-engagement CTA on cancellation outcomes. Anchor-link
+  // to the Browse classes section so the user lands exactly where
+  // they can rebook without leaving the page.
+  const showRebookCta =
+    outcome.kind === "cancelled" || outcome.kind === "late-cancel";
+
   return (
     <div
       role="status"
       aria-live="polite"
-      className={`mt-4 flex items-start justify-between gap-3 rounded border px-4 py-3 ${palette.border}`}
+      className={`mt-4 rounded border px-4 py-3 ${palette.border}`}
     >
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className={`text-sm font-medium ${palette.text}`}>{title}</span>
-        {detail && <span className="text-xs text-white/60">{detail}</span>}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className={`text-sm font-medium ${palette.text}`}>{title}</span>
+          {detail && <span className="text-xs text-white/60">{detail}</span>}
+        </div>
+        <button
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          className="shrink-0 text-white/30 hover:text-white/70"
+        >
+          ×
+        </button>
       </div>
-      <button
-        onClick={onDismiss}
-        aria-label="Dismiss"
-        className="shrink-0 text-white/30 hover:text-white/70"
-      >
-        ×
-      </button>
+      {showRebookCta && (
+        <div className="mt-3">
+          <a
+            href="#browse-classes"
+            className="inline-block rounded border border-white/25 px-3 py-1.5 text-xs text-white/80 hover:border-white/50 hover:text-white"
+          >
+            Browse upcoming classes
+          </a>
+        </div>
+      )}
     </div>
   );
 }
@@ -1095,15 +1117,47 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
         </section>
       )}
 
+      {/* v0.19.0 Use credits CTA — only when the member has credits to
+          spend AND no upcoming bookings. Pure UI nudge from existing
+          state (member.credits + myClasses); no new data fetch. Hidden
+          for unlimited members (credits === null), drop-in members,
+          and anyone who already has something coming up. */}
+      {(() => {
+        const credits = member.credits;
+        const hasUpcoming = myClasses.length > 0;
+        if (credits === null || credits <= 0 || hasUpcoming) return null;
+        return (
+          <section className="mt-8 rounded border border-white/15 bg-white/[0.02] px-4 py-4">
+            <p className="text-sm font-medium text-white/90">
+              You have {credits} credit{credits === 1 ? "" : "s"} available
+            </p>
+            <p className="mt-1 text-xs text-white/50">
+              Use your credits to book your next class.
+            </p>
+            <a
+              href="#browse-classes"
+              className="mt-3 inline-block rounded border border-white/30 px-3 py-1.5 text-xs text-white/80 hover:border-white/60 hover:text-white"
+            >
+              Browse classes
+            </a>
+          </section>
+        );
+      })()}
+
       {/* Browse classes */}
-      <section className="mt-8" aria-label="Browse classes">
+      <section
+        id="browse-classes"
+        className="mt-8 scroll-mt-6"
+        aria-label="Browse classes"
+      >
         <h2 className="text-sm font-medium text-white/70">
           Browse classes
           <span className="ml-2 text-white/40">{browseClasses.length}</span>
         </h2>
         {browseClasses.length === 0 ? (
           <p className="mt-3 text-xs text-white/40">
-            No upcoming classes available right now.
+            No classes available right now. Check back later or contact the
+            studio for schedule updates.
           </p>
         ) : (
           <ul className="mt-3 flex flex-col gap-2">

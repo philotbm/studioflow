@@ -199,6 +199,37 @@ export default function ReceiptDetail({
         </div>
       )}
 
+      {/* v0.19.0 re-engagement CTAs — only on refunded purchases. The
+          member just lost an entitlement; offer immediate paths back
+          (buy a new plan, browse classes if they still have credits
+          on a different plan). Both buttons land on /my/{slug}; the
+          Browse classes button anchors to the Browse classes section.
+          Hidden on legacy refunded rows because we can't honestly
+          frame "Credits removed: N" on those, and a vague "this was
+          refunded" doesn't justify a re-engagement push. */}
+      {isRefunded && !isLegacy && (
+        <div className="mt-3 rounded border border-white/10 px-4 py-3">
+          <p className="text-xs text-white/60">
+            You can still book classes by purchasing a plan or using
+            remaining credits.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              href={`/my/${memberSlug}`}
+              className="rounded border border-white/25 px-3 py-1.5 text-xs text-white/80 hover:border-white/50 hover:text-white"
+            >
+              Browse plans
+            </Link>
+            <Link
+              href={`/my/${memberSlug}#browse-classes`}
+              className="rounded border border-white/25 px-3 py-1.5 text-xs text-white/80 hover:border-white/50 hover:text-white"
+            >
+              Browse classes
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* Receipt body */}
       <section className="mt-6 rounded border border-white/10 px-4 py-4">
         <h2 className="text-xs uppercase tracking-wide text-white/40">
