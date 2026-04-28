@@ -4,7 +4,7 @@ export function GET() {
   return NextResponse.json({
     status: "ok",
     system: "studioflow",
-    version: "v0.17.2",
-    release: "Revenue CSV Export",
+    version: "v0.18.0",
+    release: "Member Purchase History Foundation",
   });
 }
