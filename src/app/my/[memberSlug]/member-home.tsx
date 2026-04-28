@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMember, useStore, usePlans } from "@/lib/store";
+import { useMember, useStore, usePlans, formatRelative } from "@/lib/store";
 import type { StudioClass } from "@/app/app/classes/data";
+import type { PurchaseRecord } from "@/lib/db";
 import {
   decideEligibility,
   consumedLabel,
@@ -16,7 +17,7 @@ import {
   type MembershipTone,
 } from "@/lib/memberships";
 import { PlansSection } from "./plans-section";
-import { findPlan, type Plan } from "@/lib/plans";
+import { findPlan, formatPriceEur, type Plan } from "@/lib/plans";
 
 /**
  * v0.11.0 Member Home Foundation.
@@ -422,6 +423,166 @@ const MONTH_NAMES = [
  */
 function todayLabel(now: Date): string {
   return `${WEEKDAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]}`;
+}
+
+// ── Member purchase history (v0.18.0) ─────────────────────────────────
+//
+// Customer-safe view of the same `purchases` rows the operator sees on
+// /app/members/[id]. Internal vocabulary (source values like dev_fake /
+// operator_manual / fake, external_id, ledger, RPC) is deliberately not
+// rendered — the member just sees plan name, status, what they paid,
+// what they got, and when. Legacy pre-v0.15.0 rows with NULL economics
+// render as "Older purchase record" instead of broken "—" placeholders
+// so the member never sees a row that looks malformed.
+//
+// Reads from the same store action (getPurchases) the operator surface
+// uses, so the two views are wired to identical server truth. No new
+// schema, no new endpoint.
+
+const MEMBER_STATUS_LABELS: Record<string, string> = {
+  completed: "Completed",
+  refunded: "Refunded",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+const MEMBER_STATUS_TONES: Record<string, string> = {
+  completed: "border-green-400/30 text-green-400",
+  refunded: "border-amber-400/30 text-amber-300",
+  failed: "border-red-400/30 text-red-400",
+  cancelled: "border-white/20 text-white/50",
+};
+
+function memberDateLabel(iso: string, now: number): string {
+  // Reuse the relative formatter ("just now", "2 days ago", etc.) so
+  // the page reads consistently with the existing class outcome cards
+  // and the operator credit-history list.
+  return formatRelative(new Date(iso).getTime(), now);
+}
+
+function MemberPurchaseHistorySection({
+  memberSlug,
+  plans,
+}: {
+  memberSlug: string;
+  plans: Plan[];
+}) {
+  const { getPurchases, members } = useStore();
+  const [entries, setEntries] = useState<PurchaseRecord[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPurchases(memberSlug, 10).then((rows) => {
+      if (!cancelled) setEntries(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Re-fetch when the members collection updates (a refund or a new
+    // purchase via member-home Buy fires a store refresh, which
+    // changes `members`, which triggers this effect).
+  }, [getPurchases, memberSlug, members]);
+
+  if (!entries) return null;
+
+  const now = Date.now();
+  return (
+    <section className="mt-10">
+      <h2 className="text-sm font-medium text-white/70">Purchase history</h2>
+      <p className="mt-1 text-xs text-white/40">
+        Your most recent purchases. Refunds show up here too.
+      </p>
+      {entries.length === 0 ? (
+        <p className="mt-3 text-xs text-white/40">
+          No purchases yet. When you buy a class pack or membership it
+          will show up here.
+        </p>
+      ) : (
+        <ul className="mt-3 flex flex-col gap-2">
+          {entries.map((e) => {
+            const plan = findPlan(e.planId, plans);
+            // Member-safe plan name. Falls back to a generic word
+            // rather than the raw plan_id ("pack_5") if the
+            // catalogue can't resolve it — the operator surface
+            // shows the raw id, but the member shouldn't.
+            const planLabel = plan?.name ?? "Plan";
+            const statusKey = e.status;
+            const statusLabel =
+              MEMBER_STATUS_LABELS[statusKey] ?? "Completed";
+            const statusTone =
+              MEMBER_STATUS_TONES[statusKey] ??
+              "border-white/20 text-white/50";
+
+            // A row is "legacy" when it predates v0.15.0 and has no
+            // recorded price or credits. The plan_id is still
+            // present so the member sees what plan it was — just
+            // not the receipt details.
+            const isLegacy =
+              e.priceCentsPaid === null || e.creditsGranted === null;
+
+            // Whether the plan is unlimited drives the entitlement
+            // copy. We use the resolved plan for this — if the
+            // plan can't be resolved, fall back to credits_granted
+            // (NULL on the row implies unlimited for non-legacy
+            // post-v0.15.0 rows; for legacy rows we render the
+            // "older purchase" copy anyway, so this branch only
+            // matters for unresolved-but-modern purchases).
+            const isUnlimited =
+              plan?.type === "unlimited" ||
+              (plan === undefined &&
+                !isLegacy &&
+                e.creditsGranted === null);
+
+            const priceText = e.priceCentsPaid === null
+              ? null
+              : formatPriceEur(e.priceCentsPaid);
+            const entitlementText = isUnlimited
+              ? "Unlimited access"
+              : e.creditsGranted === null
+                ? null
+                : e.creditsGranted === 1
+                  ? "1 credit added"
+                  : `${e.creditsGranted} credits added`;
+
+            return (
+              <li
+                key={e.id}
+                className="rounded border border-white/10 px-4 py-2.5"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-sm font-medium">{planLabel}</span>
+                  <span
+                    className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${statusTone}`}
+                  >
+                    {statusLabel}
+                  </span>
+                </div>
+                {isLegacy ? (
+                  <div className="mt-1 flex flex-col gap-0.5">
+                    <span className="text-[11px] text-white/50">
+                      Older purchase record
+                    </span>
+                    <span className="text-[11px] text-white/30">
+                      Full receipt details unavailable
+                    </span>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-[11px] text-white/40">
+                    {priceText && entitlementText
+                      ? `${priceText} · ${entitlementText}`
+                      : priceText ?? entitlementText ?? ""}
+                  </p>
+                )}
+                <p className="mt-1 text-[11px] text-white/30">
+                  {memberDateLabel(e.createdAt, now)}
+                </p>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 // ── Page ───────────────────────────────────────────────────────────
@@ -971,6 +1132,15 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
         plans={plans.filter((p) => p.active)}
         onBuy={handleBuy}
         busyPlanId={busyPlanId}
+      />
+
+      {/* v0.18.0 Member purchase history — what the member has bought,
+          what was refunded. Sits after PlansSection so the order reads
+          "what's available" then "what you've done". Customer-safe
+          copy only; internal source/external_id never rendered. */}
+      <MemberPurchaseHistorySection
+        memberSlug={member.id}
+        plans={plans}
       />
     </main>
   );
