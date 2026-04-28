@@ -139,16 +139,15 @@ export async function GET() {
     );
   }
 
-  // Probe whether the v0.15.0 schema is applied. One head:true select
-  // that names the new columns — Postgres returns 42703 (undefined
-  // column) if the migration is missing, success (or empty data) if
-  // applied. No row payload returned.
+  // Probe whether the v0.15.0 schema is applied. PostgREST evaluates
+  // the SELECT column list against the schema when actually returning
+  // rows; head:true skips that step, so we use a real LIMIT 1 select.
+  // An empty result is fine — the test is whether the columns parse,
+  // not whether any row exists. Postgres returns 42703 (undefined
+  // column) if the migration is missing.
   const probe = await client
     .from("purchases")
-    .select("id, status, price_cents_paid, credits_granted", {
-      count: "exact",
-      head: true,
-    })
+    .select("id, status, price_cents_paid, credits_granted")
     .limit(1);
   const migrationApplied = !(probe.error && probe.error.code === "42703");
   const probeError =
