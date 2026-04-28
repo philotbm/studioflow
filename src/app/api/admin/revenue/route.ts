@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase";
 
 /**
- * v0.17.0 GET-only revenue summary.
+ * v0.17.1 GET-only revenue summary with optional date range filter.
  *
  * Read-only aggregation over the `purchases` table — no Stripe call,
  * no member lookup, no plan lookup. Powers the operator
@@ -20,30 +20,35 @@ import { getSupabaseClient } from "@/lib/supabase";
  *   - Future failed/cancelled rows (no producer writes them today).
  *   - Unlimited-plan rows (NULL credits_granted) — none exist on
  *     prod yet but the filter is intentional per the v0.17.0 brief.
- *     Will need a separate revenue model when unlimited plans
- *     start moving money.
  *
- * Computed totals:
+ * Computed totals (within the selected date range, if any):
  *   - grossRevenueCents       = SUM(price_cents_paid) over all
  *                               eligible rows (completed + refunded).
  *                               Standard accounting: "total billed".
  *   - refundedRevenueCents    = SUM(price_cents_paid) over eligible
  *                               status='refunded' rows.
- *   - netRevenueCents         = gross - refunded
- *                             = SUM over eligible status='completed'.
+ *   - netRevenueCents         = gross - refunded.
  *   - completedCount          = COUNT eligible status='completed'.
  *   - refundedCount           = COUNT eligible status='refunded'.
- *   - legacyExcludedCount     = COUNT WHERE price_cents_paid IS NULL.
- *   - bySource[]              = per-source breakdown (count + revenue
- *                               for completed and refunded plus net),
- *                               sorted by revenueCompletedCents desc.
+ *   - legacyExcludedCount     = COUNT WHERE price_cents_paid IS NULL
+ *                               OR credits_granted IS NULL (within range).
+ *   - bySource[]              = per-source breakdown sorted by
+ *                               revenueCompletedCents desc.
  *
- * Brief-text vs intent note: the v0.17.0 brief's literal text for
- * "gross revenue" reads "SUM WHERE status='completed'", which would
- * make gross < net once any refund exists. The brief's own validation
- * numbers (gross €150 vs net €50 with one refund) require the
- * standard-accounting interpretation used here. This route follows
- * the standard one.
+ * v0.17.1 date-range filter (NEW):
+ *   ?range=lifetime|today|last7|last30  (default: lifetime)
+ *
+ *   - lifetime — no created_at filter.
+ *   - today    — created_at >= start of today in Europe/Dublin (the
+ *                studio's timezone). The cutoff is computed via
+ *                Intl date math so it tracks DST correctly.
+ *   - last7    — created_at >= now() - 7 days (rolling 7×24h window).
+ *   - last30   — created_at >= now() - 30 days (rolling 30×24h window).
+ *
+ *   An unknown range value returns HTTP 400 with a clear error
+ *   message rather than silently falling back. The page UI only
+ *   emits known values, so a 400 here points at a typo'd
+ *   hand-crafted URL — failing loud surfaces it.
  *
  * GET-safe and read-only. POST is deliberately not exported.
  */
@@ -58,6 +63,7 @@ type PurchaseRow = {
   source: KnownSource | string;
   price_cents_paid: number | null;
   credits_granted: number | null;
+  created_at: string;
 };
 
 export type SourceRevenue = {
@@ -69,8 +75,27 @@ export type SourceRevenue = {
   netRevenueCents: number;
 };
 
+export type RangeKey = "lifetime" | "today" | "last7" | "last30";
+const ALLOWED_RANGES: ReadonlyArray<RangeKey> = [
+  "lifetime",
+  "today",
+  "last7",
+  "last30",
+];
+
+const RANGE_LABELS: Record<RangeKey, string> = {
+  lifetime: "All time",
+  today: "Today (Europe/Dublin)",
+  last7: "Last 7 days",
+  last30: "Last 30 days",
+};
+
 export type RevenueSummary = {
   ok: true;
+  selectedRange: RangeKey;
+  rangeLabel: string;
+  rangeStart: string | null;
+  rangeEnd: string | null;
   grossRevenueCents: number;
   refundedRevenueCents: number;
   netRevenueCents: number;
@@ -78,13 +103,93 @@ export type RevenueSummary = {
   refundedCount: number;
   legacyExcludedCount: number;
   bySource: SourceRevenue[];
-  /** Total `purchases` rows on the table — sanity check vs. the
-   *  eligibility filter so the operator can see what fraction of
-   *  the table is contributing to the numbers. */
   totalRows: number;
 };
 
-export async function GET() {
+/**
+ * Compute "start of today" in Europe/Dublin as a UTC instant.
+ * Uses Intl date math so DST transitions (BST ↔ IST) are handled by
+ * the Node.js runtime tz database; no hardcoded offsets.
+ */
+function startOfTodayDublin(now: Date): Date {
+  const tz = "Europe/Dublin";
+  // 1. Compute today's calendar date in Dublin (e.g. "2026-04-28").
+  const ymd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+  // 2. Determine Dublin's UTC offset right now via shortOffset:
+  //    "GMT" (winter, IST=GMT) or "GMT+1" (summer, BST=UTC+1).
+  const tzNamePart = new Intl.DateTimeFormat("en", {
+    timeZone: tz,
+    timeZoneName: "shortOffset",
+  })
+    .formatToParts(now)
+    .find((p) => p.type === "timeZoneName");
+  const offsetHours = (() => {
+    if (!tzNamePart) return 0;
+    const m = /GMT([+-]\d+)?(?::(\d+))?/.exec(tzNamePart.value);
+    if (!m) return 0;
+    const h = m[1] ? parseInt(m[1], 10) : 0;
+    const mins = m[2] ? parseInt(m[2], 10) : 0;
+    return h + (h < 0 ? -mins : mins) / 60;
+  })();
+  // 3. Dublin midnight as UTC = local-midnight - offsetHours.
+  const utcMidnightOfYmd = new Date(`${ymd}T00:00:00Z`).getTime();
+  return new Date(utcMidnightOfYmd - offsetHours * 60 * 60 * 1000);
+}
+
+function rangeWindow(
+  range: RangeKey,
+  now: Date,
+): { start: Date | null; end: Date | null } {
+  if (range === "lifetime") return { start: null, end: null };
+  if (range === "today") return { start: startOfTodayDublin(now), end: now };
+  if (range === "last7") {
+    const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    return { start, end: now };
+  }
+  // last30
+  const start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  return { start, end: now };
+}
+
+function inRange(
+  createdAt: string,
+  start: Date | null,
+  end: Date | null,
+): boolean {
+  if (start === null && end === null) return true;
+  const t = new Date(createdAt).getTime();
+  if (start !== null && t < start.getTime()) return false;
+  if (end !== null && t > end.getTime()) return false;
+  return true;
+}
+
+export async function GET(req: Request) {
+  // Parse + validate range. 400 on unknown values rather than silent
+  // fallback — the UI only emits valid values, so a bad value here
+  // is a typo or a hand-crafted URL the operator would want to see.
+  const url = new URL(req.url);
+  const requested = url.searchParams.get("range");
+  let range: RangeKey;
+  if (requested === null) {
+    range = "lifetime";
+  } else if ((ALLOWED_RANGES as readonly string[]).includes(requested)) {
+    range = requested as RangeKey;
+  } else {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "invalid_range",
+        error: `Invalid range "${requested}". Must be one of: ${ALLOWED_RANGES.join(", ")}.`,
+      },
+      { status: 400 },
+    );
+  }
+
   const client = getSupabaseClient();
   if (!client) {
     return NextResponse.json(
@@ -95,11 +200,10 @@ export async function GET() {
 
   const { data, error } = await client
     .from("purchases")
-    .select("status, source, price_cents_paid, credits_granted");
+    .select(
+      "status, source, price_cents_paid, credits_granted, created_at",
+    );
   if (error) {
-    // 42703 (undefined column) means the v0.15.0 migration hasn't
-    // been applied. Return a clear, GET-safe error rather than
-    // leaking the postgres code.
     if (error.code === "42703") {
       return NextResponse.json(
         {
@@ -118,7 +222,10 @@ export async function GET() {
     );
   }
 
-  const rows = (data ?? []) as PurchaseRow[];
+  const allRows = (data ?? []) as PurchaseRow[];
+  const now = new Date();
+  const { start, end } = rangeWindow(range, now);
+  const rows = allRows.filter((r) => inRange(r.created_at, start, end));
 
   let grossRevenueCents = 0;
   let refundedRevenueCents = 0;
@@ -126,10 +233,6 @@ export async function GET() {
   let refundedCount = 0;
   let legacyExcludedCount = 0;
 
-  // Per-source aggregation. Map keyed on source value; we only
-  // surface sources that have at least one eligible row, so a
-  // source with zero rows (e.g. stripe today) doesn't clutter the
-  // table.
   const sourceMap = new Map<string, SourceRevenue>();
   function bucket(source: string): SourceRevenue {
     let s = sourceMap.get(source);
@@ -179,16 +282,10 @@ export async function GET() {
     }
   }
 
-  // Per-source net = completed revenue - refunded revenue. Note
-  // this can go negative for a source if every completed purchase
-  // for it has been refunded plus then some. That's fine — the
-  // table shows the truth.
   for (const s of sourceMap.values()) {
     s.netRevenueCents = s.revenueCompletedCents - s.revenueRefundedCents;
   }
 
-  // Sort by revenueCompletedCents descending. Ties broken by
-  // refunded-revenue desc, then source name for determinism.
   const bySource = Array.from(sourceMap.values()).sort((a, b) => {
     if (b.revenueCompletedCents !== a.revenueCompletedCents) {
       return b.revenueCompletedCents - a.revenueCompletedCents;
@@ -201,6 +298,10 @@ export async function GET() {
 
   const summary: RevenueSummary = {
     ok: true,
+    selectedRange: range,
+    rangeLabel: RANGE_LABELS[range],
+    rangeStart: start ? start.toISOString() : null,
+    rangeEnd: end ? end.toISOString() : null,
     grossRevenueCents,
     refundedRevenueCents,
     netRevenueCents: grossRevenueCents - refundedRevenueCents,
