@@ -4,7 +4,7 @@ export function GET() {
   return NextResponse.json({
     status: "ok",
     system: "studioflow",
-    version: "v0.18.2",
-    release: "Receipt Direct-Link Reliability",
+    version: "v0.19.0",
+    release: "Booking Recovery / Rebooking Foundation",
   });
 }

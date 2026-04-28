@@ -1365,6 +1365,8 @@ function filterOpportunitySignals(
 export default function MemberDetail({ id }: { id: string }) {
   const member = useMember(id);
   const plans = usePlans();
+  // v0.19.0: classes feed the next-action "no upcoming bookings" check.
+  const { classes } = useStore();
 
   if (!member) {
     return (
@@ -1393,6 +1395,47 @@ export default function MemberDetail({ id }: { id: string }) {
   const impact = revenueImpact(ins);
   const canAdjust = member.planType === "class_pack" || member.planType === "trial";
 
+  // v0.19.0 next-action signal. Two pragmatic recovery prompts derived
+  // from existing data — no new fetch, no schema change.
+  //
+  // - "Encourage booking" fires when the member has spendable credits
+  //   AND no upcoming bookings on the live classes list. Unlimited
+  //   members (credits===null) never have a credit count to spend, so
+  //   they're excluded — they're handled by the existing booking flow.
+  // - "At risk of drop-off" fires when the most recent entry in the
+  //   member's seeded history is a late_cancel/cancelled event. The
+  //   history JSON is the only per-member event stream available
+  //   client-side; this is intentionally lightweight, not an
+  //   exhaustive event check.
+  const nextActionMessage = (() => {
+    const credits = member.credits;
+    const hasSpendableCredits = credits !== null && credits > 0;
+    const upcomingBookings = classes.filter(
+      (cls) =>
+        cls.lifecycle === "upcoming" &&
+        (cls.attendees.some(
+          (a) =>
+            a.memberId === member.id &&
+            (a.status === "booked" || a.status === "checked_in"),
+        ) ||
+          (cls.waitlist ?? []).some((w) => w.memberId === member.id)),
+    ).length;
+    if (hasSpendableCredits && upcomingBookings === 0) {
+      return "Encourage booking";
+    }
+    // The seeded HistoryEvent.type taxonomy is upcoming / attended /
+    // late_cancel / no_show / purchase / started — there is no
+    // separate 'cancelled' value, so late_cancel is the only
+    // cancellation signal we can derive from member.history alone.
+    // The brief mentions both; we honour late_cancel here and would
+    // need a real booking_events fetch to surface plain cancellations,
+    // which is out of scope for v0.19.0 (no new endpoints).
+    if (member.history?.[0]?.type === "late_cancel") {
+      return "At risk of drop-off";
+    }
+    return null;
+  })();
+
   return (
     <main className="mx-auto max-w-2xl">
       <Link
@@ -1417,6 +1460,19 @@ export default function MemberDetail({ id }: { id: string }) {
           View member home &rarr;
         </Link>
       </div>
+
+      {/* v0.19.0 next-action signal — small text-only block, no
+          styling overhaul. Only renders when one of the recovery
+          rules fires; otherwise hidden so the page stays uncluttered
+          for healthy members. */}
+      {nextActionMessage && (
+        <p className="mt-2 text-xs text-white/50">
+          <span className="uppercase tracking-wide text-white/30">
+            Next action ·{" "}
+          </span>
+          {nextActionMessage}
+        </p>
+      )}
 
       {/* v0.9.4 Membership panel — consolidated commercial truth. The
           server-derived Booking Access panel below is still the
