@@ -4,7 +4,7 @@ export function GET() {
   return NextResponse.json({
     status: "ok",
     system: "studioflow",
-    version: "v0.16.1",
-    release: "Refund Guardrail Visibility",
+    version: "v0.17.0",
+    release: "Revenue Reporting Foundation",
   });
 }
