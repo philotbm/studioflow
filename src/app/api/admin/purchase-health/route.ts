@@ -2,36 +2,48 @@ import { NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase";
 
 /**
- * v0.15.1 GET-only purchase diagnostics.
+ * v0.15.1.1 GET-only purchase diagnostics.
  *
  * Safe to open in a browser. Read-only. No secrets exposed — the
  * stripe / webhook booleans report whether env vars are present,
  * not their values.
  *
- * v0.15.1 additions on top of the v0.13.1 baseline:
+ * v0.15.1 added on top of the v0.13.1 baseline:
  *   - sourceDistribution: row counts by source value, so the operator
  *     can see at a glance how many real Stripe purchases vs dev_fake
  *     vs operator_manual vs legacy 'fake' rows live in the table.
- *   - suspiciousFakeRows: any row with source='fake' created on or
- *     after the v0.15.0 release point (2026-04-27). No current code
- *     path emits 'fake' any more, so post-release 'fake' rows are
- *     either an unmigrated DB silently writing legacy values (the
- *     pre-v0.15.1 behaviour we removed) or direct DB writes. Flagged
- *     loudly so a missed migration is visible.
+ *   - suspiciousFakeRows: rows with source='fake' on/after the
+ *     v0.15.0 release point (2026-04-27). No current code path
+ *     emits 'fake' once the migration is applied, so post-release
+ *     'fake' rows are either an unmigrated DB falling back via
+ *     applyPurchase or a direct write.
  *   - incompleteCompletedRows: rows with status='completed' but a
  *     NULL price_cents_paid OR credits_granted. Pre-v0.15.0 rows are
  *     legitimately NULL (no value to backfill); this counter scopes
  *     the flag to rows created after the v0.15.0 release point so
  *     legacy history isn't noisy.
- *   - flags[]: short human-readable strings summarising the above for
- *     paste-back into a release report.
+ *   - flags[]: short human-readable strings summarising the above
+ *     for paste-back into a release report.
+ *
+ * v0.15.1.1 added:
+ *   - migrationApplied: detects whether the v0.15.0 schema is
+ *     actually present (status / price_cents_paid / credits_granted
+ *     columns + widened source CHECK). If missing, the endpoint
+ *     degrades to the v0.13.1 shape (no v0.15.0 fields are queried)
+ *     and surfaces a top-level flag pointing at the migration. This
+ *     makes the missing-migration condition the single most visible
+ *     thing on the page rather than a query error.
+ *   - legacyFallback flag: when applyPurchase has been writing
+ *     'fake' rows post-cutoff because the migration is missing,
+ *     that's surfaced separately so it's not confused with a
+ *     direct-DB-write anomaly.
  *
  * Intended use cases:
  *   - Confirming Stripe env is wired up on a deployment (or not).
+ *   - Detecting an unmigrated DB silently writing legacy 'fake' rows.
  *   - Sanity-checking the last few purchases without diving into
  *     Supabase.
  *   - Post-merge QA for the purchase path.
- *   - Detecting an unmigrated DB silently writing legacy 'fake' rows.
  *
  * POST is deliberately NOT exported — diagnostics should never mutate.
  */
@@ -40,28 +52,73 @@ export const runtime = "nodejs";
 
 /**
  * v0.15.0 went into main on 2026-04-27 (commit 4c6aa4f). After this
- * date, no code path emits source='fake'. Anything written with that
- * source on/after this cutoff is a signal — either an unmigrated DB
- * (the v0.15.0 silent fallback we removed in v0.15.1) or a direct
- * DB write. Conservative midnight-UTC of the commit day so a row
- * created the same day is included in the count.
+ * date, no code path emits source='fake' on a migrated DB. Anything
+ * written with that source on/after this cutoff is a signal — either
+ * an unmigrated DB (the v0.15.1.1 fallback path) or a direct DB
+ * write. Conservative midnight-UTC of the commit day so a row created
+ * the same day is included in the count.
  */
 const V0150_RELEASE_CUTOFF_ISO = "2026-04-27T00:00:00Z";
 
 type KnownSource = "stripe" | "fake" | "dev_fake" | "operator_manual";
 
-type PurchaseSummaryRow = {
+type PurchaseSummaryRowLegacy = {
   id: string;
   memberSlug: string | null;
   memberName: string | null;
   planId: string;
   source: KnownSource;
   externalId: string;
+  createdAt: string;
+};
+
+type PurchaseSummaryRow = PurchaseSummaryRowLegacy & {
   status: string;
   priceCentsPaid: number | null;
   creditsGranted: number | null;
-  createdAt: string;
 };
+
+type PurchaseJoinedRowLegacy = {
+  id: string;
+  plan_id: string;
+  source: KnownSource;
+  external_id: string;
+  created_at: string;
+  members: { slug: string | null; full_name: string | null } | null;
+};
+
+type PurchaseJoinedRow = PurchaseJoinedRowLegacy & {
+  status: string;
+  price_cents_paid: number | null;
+  credits_granted: number | null;
+};
+
+function projectRowFull(r: PurchaseJoinedRow): PurchaseSummaryRow {
+  return {
+    id: r.id,
+    memberSlug: r.members?.slug ?? null,
+    memberName: r.members?.full_name ?? null,
+    planId: r.plan_id,
+    source: r.source,
+    externalId: r.external_id,
+    status: r.status,
+    priceCentsPaid: r.price_cents_paid,
+    creditsGranted: r.credits_granted,
+    createdAt: r.created_at,
+  };
+}
+
+function projectRowLegacy(r: PurchaseJoinedRowLegacy): PurchaseSummaryRowLegacy {
+  return {
+    id: r.id,
+    memberSlug: r.members?.slug ?? null,
+    memberName: r.members?.full_name ?? null,
+    planId: r.plan_id,
+    source: r.source,
+    externalId: r.external_id,
+    createdAt: r.created_at,
+  };
+}
 
 export async function GET() {
   const stripeConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
@@ -70,13 +127,43 @@ export async function GET() {
 
   const client = getSupabaseClient();
   if (!client) {
-    return NextResponse.json({
-      ok: false,
-      stripeConfigured,
-      webhookConfigured,
-      fakeModeActive,
-      error: "Supabase not configured",
-    }, { status: 503 });
+    return NextResponse.json(
+      {
+        ok: false,
+        stripeConfigured,
+        webhookConfigured,
+        fakeModeActive,
+        error: "Supabase not configured",
+      },
+      { status: 503 },
+    );
+  }
+
+  // Probe whether the v0.15.0 schema is applied. One head:true select
+  // that names the new columns — Postgres returns 42703 (undefined
+  // column) if the migration is missing, success (or empty data) if
+  // applied. No row payload returned.
+  const probe = await client
+    .from("purchases")
+    .select("id, status, price_cents_paid, credits_granted", {
+      count: "exact",
+      head: true,
+    })
+    .limit(1);
+  const migrationApplied = !(probe.error && probe.error.code === "42703");
+  const probeError =
+    probe.error && probe.error.code !== "42703" ? probe.error.message : null;
+  if (probeError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        stripeConfigured,
+        webhookConfigured,
+        fakeModeActive,
+        error: `migration probe failed: ${probeError}`,
+      },
+      { status: 500 },
+    );
   }
 
   // Total purchase count.
@@ -84,19 +171,22 @@ export async function GET() {
     .from("purchases")
     .select("id", { count: "exact", head: true });
   if (countErr) {
-    return NextResponse.json({
-      ok: false,
-      stripeConfigured,
-      webhookConfigured,
-      fakeModeActive,
-      error: `purchases count query failed: ${countErr.message}`,
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        ok: false,
+        stripeConfigured,
+        webhookConfigured,
+        fakeModeActive,
+        migrationApplied,
+        error: `purchases count query failed: ${countErr.message}`,
+      },
+      { status: 500 },
+    );
   }
 
-  // Source-distribution counts. One head:true count per known source —
-  // four cheap queries, no row payload returned. Unknown sources land
-  // in a single `unknown` bucket so a future widening of the CHECK
-  // constraint is visible without a code change.
+  // Source-distribution counts. One head:true count per known source
+  // — four cheap queries. Unknown sources land in a bucket so a
+  // future widening of the CHECK constraint stays visible.
   async function countBySource(
     source: KnownSource,
   ): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
@@ -118,14 +208,18 @@ export async function GET() {
 
   for (const r of [stripeCount, fakeCount, devFakeCount, operatorManualCount]) {
     if (!r.ok) {
-      return NextResponse.json({
-        ok: false,
-        stripeConfigured,
-        webhookConfigured,
-        fakeModeActive,
-        totalPurchases: totalPurchases ?? 0,
-        error: `source distribution query failed: ${r.error}`,
-      }, { status: 500 });
+      return NextResponse.json(
+        {
+          ok: false,
+          stripeConfigured,
+          webhookConfigured,
+          fakeModeActive,
+          migrationApplied,
+          totalPurchases: totalPurchases ?? 0,
+          error: `source distribution query failed: ${r.error}`,
+        },
+        { status: 500 },
+      );
     }
   }
 
@@ -142,127 +236,170 @@ export async function GET() {
     unknown: Math.max(0, (totalPurchases ?? 0) - knownTotal),
   };
 
-  // Suspicious 'fake' rows: source='fake' AND created_at >= cutoff.
-  const { data: suspiciousFakeRowsRaw, count: suspiciousFakeCount, error: susErr } =
-    await client
+  const flags: string[] = [];
+
+  // Migration-applied branch. Full v0.15.0 lifecycle queries.
+  if (migrationApplied) {
+    const fullCols =
+      "id, plan_id, source, external_id, status, price_cents_paid, credits_granted, created_at, members(slug, full_name)";
+
+    const { data: suspiciousFakeRowsRaw, count: suspiciousFakeCount, error: susErr } =
+      await client
+        .from("purchases")
+        .select(fullCols, { count: "exact" })
+        .eq("source", "fake")
+        .gte("created_at", V0150_RELEASE_CUTOFF_ISO)
+        .order("created_at", { ascending: false })
+        .limit(10);
+    if (susErr) {
+      return NextResponse.json(
+        {
+          ok: false,
+          stripeConfigured,
+          webhookConfigured,
+          fakeModeActive,
+          migrationApplied,
+          totalPurchases: totalPurchases ?? 0,
+          sourceDistribution,
+          error: `suspicious fake query failed: ${susErr.message}`,
+        },
+        { status: 500 },
+      );
+    }
+
+    const { data: incompleteRowsRaw, count: incompleteCount, error: incErr } =
+      await client
+        .from("purchases")
+        .select(fullCols, { count: "exact" })
+        .eq("status", "completed")
+        .gte("created_at", V0150_RELEASE_CUTOFF_ISO)
+        .or("price_cents_paid.is.null,credits_granted.is.null")
+        .order("created_at", { ascending: false })
+        .limit(10);
+    if (incErr) {
+      return NextResponse.json(
+        {
+          ok: false,
+          stripeConfigured,
+          webhookConfigured,
+          fakeModeActive,
+          migrationApplied,
+          totalPurchases: totalPurchases ?? 0,
+          sourceDistribution,
+          error: `incomplete-completed query failed: ${incErr.message}`,
+        },
+        { status: 500 },
+      );
+    }
+
+    const { data: recent, error: recentErr } = await client
       .from("purchases")
-      .select(
-        "id, plan_id, source, external_id, status, price_cents_paid, credits_granted, created_at, members(slug, full_name)",
-        { count: "exact" },
-      )
-      .eq("source", "fake")
-      .gte("created_at", V0150_RELEASE_CUTOFF_ISO)
+      .select(fullCols)
       .order("created_at", { ascending: false })
       .limit(10);
-  if (susErr) {
+    if (recentErr) {
+      return NextResponse.json(
+        {
+          ok: false,
+          stripeConfigured,
+          webhookConfigured,
+          fakeModeActive,
+          migrationApplied,
+          totalPurchases: totalPurchases ?? 0,
+          sourceDistribution,
+          error: `purchases recent query failed: ${recentErr.message}`,
+        },
+        { status: 500 },
+      );
+    }
+
+    const suspiciousFakeRows: PurchaseSummaryRow[] = (
+      (suspiciousFakeRowsRaw ?? []) as unknown as PurchaseJoinedRow[]
+    ).map(projectRowFull);
+    const incompleteCompletedRows: PurchaseSummaryRow[] = (
+      (incompleteRowsRaw ?? []) as unknown as PurchaseJoinedRow[]
+    ).map(projectRowFull);
+    const last10Purchases: PurchaseSummaryRow[] = (
+      (recent ?? []) as unknown as PurchaseJoinedRow[]
+    ).map(projectRowFull);
+
+    if ((suspiciousFakeCount ?? 0) > 0) {
+      flags.push(
+        `suspicious_fake_post_release: ${suspiciousFakeCount} row(s) with source='fake' created on or after ${V0150_RELEASE_CUTOFF_ISO} — no migrated code path emits 'fake' any more, so this points to a direct write (the migration IS applied here, so this is not a legacy-fallback case)`,
+      );
+    }
+    if ((incompleteCount ?? 0) > 0) {
+      flags.push(
+        `incomplete_completed_rows: ${incompleteCount} row(s) with status='completed' but NULL price_cents_paid or credits_granted, created on or after ${V0150_RELEASE_CUTOFF_ISO} — lifecycle enrichment UPDATE failed silently for these rows`,
+      );
+    }
+    if (sourceDistribution.unknown > 0) {
+      flags.push(
+        `unknown_source_rows: ${sourceDistribution.unknown} row(s) with a source value outside the known set (stripe/dev_fake/operator_manual/fake)`,
+      );
+    }
+
     return NextResponse.json({
-      ok: false,
+      ok: true,
       stripeConfigured,
       webhookConfigured,
       fakeModeActive,
+      migrationApplied: true,
+      v0150ReleaseCutoff: V0150_RELEASE_CUTOFF_ISO,
       totalPurchases: totalPurchases ?? 0,
       sourceDistribution,
-      error: `suspicious fake query failed: ${susErr.message}`,
-    }, { status: 500 });
+      suspiciousFakePostReleaseCount: suspiciousFakeCount ?? 0,
+      suspiciousFakeRows,
+      incompleteCompletedCount: incompleteCount ?? 0,
+      incompleteCompletedRows,
+      last10Purchases,
+      flags,
+      note:
+        "Diagnostics only — read-only. The three purchase endpoints " +
+        "(/api/stripe/create-checkout-session, /api/stripe/webhook, " +
+        "/api/dev/fake-purchase) are POST-only and MUST NOT be opened " +
+        "as browser QA URLs; they return HTTP 405 on GET.",
+    });
   }
 
-  // Incomplete completed rows: status='completed' AND created_at >= cutoff
-  // AND (price_cents_paid IS NULL OR credits_granted IS NULL). Scoped to
-  // post-cutoff rows so legacy NULLs (legitimate, no value to backfill)
-  // do not light up the diagnostic forever.
-  const { data: incompleteRowsRaw, count: incompleteCount, error: incErr } =
-    await client
-      .from("purchases")
-      .select(
-        "id, plan_id, source, external_id, status, price_cents_paid, credits_granted, created_at, members(slug, full_name)",
-        { count: "exact" },
-      )
-      .eq("status", "completed")
-      .gte("created_at", V0150_RELEASE_CUTOFF_ISO)
-      .or("price_cents_paid.is.null,credits_granted.is.null")
-      .order("created_at", { ascending: false })
-      .limit(10);
-  if (incErr) {
-    return NextResponse.json({
-      ok: false,
-      stripeConfigured,
-      webhookConfigured,
-      fakeModeActive,
-      totalPurchases: totalPurchases ?? 0,
-      sourceDistribution,
-      error: `incomplete-completed query failed: ${incErr.message}`,
-    }, { status: 500 });
-  }
+  // Migration-missing branch. Fall back to the v0.13.1 shape — no
+  // v0.15.0 columns are queried — and surface the missing migration
+  // as the headline flag.
+  flags.push(
+    "v0150_migration_missing: the purchases table is on the pre-v0.15.0 schema (no status / price_cents_paid / credits_granted columns and the source CHECK has not been widened). Apply supabase/v0.15.0_migration.sql to this Supabase project. Until then, applyPurchase falls back to legacy 'fake' source so purchases still complete (legacyFallbackUsed:true on the response) but lifecycle fields cannot be recorded.",
+  );
 
-  type PurchaseJoinedRow = {
-    id: string;
-    plan_id: string;
-    source: KnownSource;
-    external_id: string;
-    status: string;
-    price_cents_paid: number | null;
-    credits_granted: number | null;
-    created_at: string;
-    members: { slug: string | null; full_name: string | null } | null;
-  };
-
-  function projectRow(r: PurchaseJoinedRow): PurchaseSummaryRow {
-    return {
-      id: r.id,
-      memberSlug: r.members?.slug ?? null,
-      memberName: r.members?.full_name ?? null,
-      planId: r.plan_id,
-      source: r.source,
-      externalId: r.external_id,
-      status: r.status,
-      priceCentsPaid: r.price_cents_paid,
-      creditsGranted: r.credits_granted,
-      createdAt: r.created_at,
-    };
-  }
-
-  const suspiciousFakeRows: PurchaseSummaryRow[] = (
-    (suspiciousFakeRowsRaw ?? []) as unknown as PurchaseJoinedRow[]
-  ).map(projectRow);
-
-  const incompleteCompletedRows: PurchaseSummaryRow[] = (
-    (incompleteRowsRaw ?? []) as unknown as PurchaseJoinedRow[]
-  ).map(projectRow);
-
-  // Last 10 across all sources — same shape as v0.13.1 so existing QA
-  // notes still work.
+  const legacyCols =
+    "id, plan_id, source, external_id, created_at, members(slug, full_name)";
   const { data: recent, error: recentErr } = await client
     .from("purchases")
-    .select(
-      "id, plan_id, source, external_id, status, price_cents_paid, credits_granted, created_at, members(slug, full_name)",
-    )
+    .select(legacyCols)
     .order("created_at", { ascending: false })
     .limit(10);
   if (recentErr) {
-    return NextResponse.json({
-      ok: false,
-      stripeConfigured,
-      webhookConfigured,
-      fakeModeActive,
-      totalPurchases: totalPurchases ?? 0,
-      sourceDistribution,
-      error: `purchases recent query failed: ${recentErr.message}`,
-    }, { status: 500 });
-  }
-
-  const last10Purchases: PurchaseSummaryRow[] = (
-    (recent ?? []) as unknown as PurchaseJoinedRow[]
-  ).map(projectRow);
-
-  const flags: string[] = [];
-  if ((suspiciousFakeCount ?? 0) > 0) {
-    flags.push(
-      `suspicious_fake_post_release: ${suspiciousFakeCount} row(s) with source='fake' created on or after ${V0150_RELEASE_CUTOFF_ISO} — no code path emits 'fake' any more, so this points to an unmigrated DB or a direct write`,
+    return NextResponse.json(
+      {
+        ok: false,
+        stripeConfigured,
+        webhookConfigured,
+        fakeModeActive,
+        migrationApplied: false,
+        totalPurchases: totalPurchases ?? 0,
+        sourceDistribution,
+        flags,
+        error: `purchases recent query failed: ${recentErr.message}`,
+      },
+      { status: 500 },
     );
   }
-  if ((incompleteCount ?? 0) > 0) {
+
+  const last10Purchases: PurchaseSummaryRowLegacy[] = (
+    (recent ?? []) as unknown as PurchaseJoinedRowLegacy[]
+  ).map(projectRowLegacy);
+
+  if (sourceDistribution.fake_legacy > 0) {
     flags.push(
-      `incomplete_completed_rows: ${incompleteCount} row(s) with status='completed' but NULL price_cents_paid or credits_granted, created on or after ${V0150_RELEASE_CUTOFF_ISO} — lifecycle enrichment UPDATE failed silently for these rows`,
+      `legacy_fallback_in_effect: ${sourceDistribution.fake_legacy} purchase row(s) carry source='fake'. On the unmigrated schema this is the only available source value for non-Stripe purchases, so each new dev_fake or operator_manual purchase is being written as 'fake'. After applying the migration, retry source distribution will flip to the canonical buckets.`,
     );
   }
   if (sourceDistribution.unknown > 0) {
@@ -276,19 +413,19 @@ export async function GET() {
     stripeConfigured,
     webhookConfigured,
     fakeModeActive,
-    totalPurchases: totalPurchases ?? 0,
+    migrationApplied: false,
     v0150ReleaseCutoff: V0150_RELEASE_CUTOFF_ISO,
+    totalPurchases: totalPurchases ?? 0,
     sourceDistribution,
-    suspiciousFakePostReleaseCount: suspiciousFakeCount ?? 0,
-    suspiciousFakeRows,
-    incompleteCompletedCount: incompleteCount ?? 0,
-    incompleteCompletedRows,
     last10Purchases,
     flags,
     note:
-      "Diagnostics only — read-only. The three purchase endpoints " +
-      "(/api/stripe/create-checkout-session, /api/stripe/webhook, " +
-      "/api/dev/fake-purchase) are POST-only and MUST NOT be opened " +
-      "as browser QA URLs; they return HTTP 405 on GET.",
+      "v0.15.0 migration is NOT applied on this Supabase. Run " +
+      "supabase/v0.15.0_migration.sql to enable the lifecycle " +
+      "diagnostics. Diagnostics only — read-only. The three purchase " +
+      "endpoints (/api/stripe/create-checkout-session, " +
+      "/api/stripe/webhook, /api/dev/fake-purchase) are POST-only " +
+      "and MUST NOT be opened as browser QA URLs; they return " +
+      "HTTP 405 on GET.",
   });
 }
