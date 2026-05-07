@@ -23,6 +23,12 @@ create table if not exists members (
   -- un-claimed (legacy/demo rows). The slug remains the public URL
   -- but is no longer the credential.
   user_id                  uuid references auth.users(id),
+  -- v0.20.1: phone-last-4 challenge state for the self-claim flow.
+  -- claim_attempts counts wrong-digit submissions since the last
+  -- success or lockout reset. claim_locked_until, when in the future,
+  -- bars further attempts on this row until cleared.
+  claim_attempts           integer not null default 0,
+  claim_locked_until       timestamptz,
   created_at               timestamptz not null default now(),
   updated_at               timestamptz not null default now()
 );

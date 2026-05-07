@@ -16,5 +16,15 @@ export default async function MemberSlugLayout({
   children: React.ReactNode;
 }) {
   const { memberSlug } = await params;
-  return <MemberAccessGate slug={memberSlug}>{children}</MemberAccessGate>;
+  // key={memberSlug} forces a remount when the dynamic param changes
+  // (e.g. /my/alice → /my/bob). Without it, the gate's useEffect would
+  // need to reset state synchronously inside itself — which the
+  // react-hooks/set-state-in-effect rule (rightly) flags as cascading
+  // render. Remount-on-key gives us the same "show pending while
+  // re-checking" behaviour without the lint smell.
+  return (
+    <MemberAccessGate key={memberSlug} slug={memberSlug}>
+      {children}
+    </MemberAccessGate>
+  );
 }

@@ -4,29 +4,35 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
-import { getSupabaseClient } from "@/lib/supabase";
+import { getSupabaseBrowserAuthClient } from "@/lib/supabase";
 
 /**
- * v0.20.0 Member login.
+ * v0.20.0 / v0.20.1 Member login.
  *
- * Single email input → Supabase magic link. The magic link redirects
- * back to /auth/callback, which finishes the session and sends the
- * user on to the right /my/{slug}.
+ * Single email input → Supabase magic link with PKCE flow. The link
+ * lands at /auth/callback?code=…&next=…, which runs the decision
+ * tree (linked → /my/{slug}, un-claimed candidate → /auth/claim,
+ * else → /login?error=no-member).
  *
  * `?next=<path>` is preserved through the round-trip via the
  * emailRedirectTo URL so the user lands where they originally tried
- * to go.
+ * to go. The redirect URL must be in the Supabase Redirect URLs
+ * allow-list (already configured for prod).
  *
- * `?error=no-member` is set by /auth/callback when a user signed in
- * successfully but has no claimed members row. The hint copy here is
- * the only place that explains the "ask the studio to link your
- * account" path until the v0.20.1 self-claim flow ships.
+ * `?error=no-member` is rendered when the callback finishes but no
+ * candidate member row matches. v0.20.1 routes the
+ * email-match-with-phone case through /auth/claim instead — only
+ * truly unmatched users see this banner now.
+ *
+ * `?error=auth&reason=…` is rendered when the magic-link exchange
+ * itself fails (expired link, replayed code, missing config).
  */
 
 function LoginForm() {
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "";
   const error = searchParams.get("error");
+  const errorReason = searchParams.get("reason");
 
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<
@@ -41,7 +47,7 @@ function LoginForm() {
   // their email again.
   useEffect(() => {
     let cancelled = false;
-    const client = getSupabaseClient();
+    const client = getSupabaseBrowserAuthClient();
     if (!client) return;
     void client.auth.getUser().then(({ data }) => {
       if (cancelled) return;
@@ -57,7 +63,7 @@ function LoginForm() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email) return;
-    const client = getSupabaseClient();
+    const client = getSupabaseBrowserAuthClient();
     if (!client) {
       setStatus({
         kind: "error",
@@ -97,9 +103,19 @@ function LoginForm() {
           role="alert"
           className="mt-6 rounded border border-amber-400/40 bg-amber-400/5 px-4 py-3 text-sm text-amber-300"
         >
-          You signed in, but your account isn&apos;t linked to a member
-          profile yet. Ask the studio to link your email so you can access
-          your bookings.
+          You signed in, but we couldn&apos;t find a member profile for your
+          email at any studio. Ask your studio to add you (with a phone
+          number on file) and try again.
+        </div>
+      )}
+      {error === "auth" && (
+        <div
+          role="alert"
+          className="mt-6 rounded border border-red-400/40 bg-red-400/5 px-4 py-3 text-sm text-red-300"
+        >
+          Sign-in failed
+          {errorReason ? ` — ${errorReason}` : ""}. Try requesting a new
+          magic link.
         </div>
       )}
 

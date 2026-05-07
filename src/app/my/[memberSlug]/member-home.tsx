@@ -892,8 +892,11 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
     try {
       // v0.20.0: forward the access token so the route handler can
       // verify the caller owns memberSlug.
-      const { getSupabaseClient } = await import("@/lib/supabase");
-      const supa = getSupabaseClient();
+      // v0.20.1: read the session from the cookie-backed browser auth
+      // client (PKCE/SSR migration). The legacy localStorage-backed
+      // getSupabaseClient() no longer holds the session.
+      const { getSupabaseBrowserAuthClient } = await import("@/lib/supabase");
+      const supa = getSupabaseBrowserAuthClient();
       const { data: sessionData2 } = supa
         ? await supa.auth.getSession()
         : { data: { session: null } };
