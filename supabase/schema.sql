@@ -19,9 +19,17 @@ create table if not exists members (
   purchase_insights_json   jsonb not null default '{}',
   opportunity_signals_json jsonb not null default '[]',
   history_summary_json     jsonb not null default '[]',
+  -- v0.20.0: links a members row to its claimed auth.users id. NULL =
+  -- un-claimed (legacy/demo rows). The slug remains the public URL
+  -- but is no longer the credential.
+  user_id                  uuid references auth.users(id),
   created_at               timestamptz not null default now(),
   updated_at               timestamptz not null default now()
 );
+
+-- v0.20.0: at most one members row per auth user.
+create unique index if not exists idx_members_user_id
+  on members(user_id) where user_id is not null;
 
 -- ═══ CLASSES ═══════════════════════════════════════════════════════════
 create table if not exists classes (

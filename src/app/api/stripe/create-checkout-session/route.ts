@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { getSupabaseClient } from "@/lib/supabase";
+import { requireMemberAccessForRequest } from "@/lib/auth";
 import { fetchPlanById } from "@/lib/plans-db";
 import { planDescription } from "@/lib/plans";
 
@@ -14,17 +15,25 @@ import { planDescription } from "@/lib/plans";
  *
  * Body: { memberSlug: string, planId: string }
  *
+ * v0.20.0 auth: requires an `Authorization: Bearer <access_token>`
+ * header. The token is validated against Supabase Auth, then the
+ * authenticated user must own the requested memberSlug
+ * (members.user_id === auth.uid()). Mismatch → 403.
+ *
  * Flow:
- *   1. Validate body + resolve plan from the DB `plans` table.
- *   2. Resolve member by slug. 404 if missing.
- *   3. If STRIPE_SECRET_KEY present → create a test-mode Stripe
+ *   1. Verify Bearer token + slug ownership (403 on miss).
+ *   2. Validate body + resolve plan from the DB `plans` table.
+ *   3. Resolve member by slug. 404 if missing.
+ *   4. If STRIPE_SECRET_KEY present → create a test-mode Stripe
  *      Checkout Session with price_data line item + metadata
  *      (memberSlug, planId) + success/cancel URLs. Return { mode:
  *      "stripe", url }.
- *   4. Else → return { mode: "fake", ok: true } so the client can
+ *   5. Else → return { mode: "fake", ok: true } so the client can
  *      follow up with /api/dev/fake-purchase.
  *
- * Stripe secret never leaves the server.
+ * Stripe secret never leaves the server. The webhook
+ * (/api/stripe/webhook) is server-to-server and stays unauthenticated
+ * here — it has its own signing-secret check.
  */
 
 export const runtime = "nodejs";
@@ -40,6 +49,17 @@ export async function POST(req: Request) {
     );
   }
   const { memberSlug, planId } = body;
+
+  // v0.20.0: only the authenticated owner of memberSlug may start a
+  // checkout session for it. requireMemberAccessForRequest validates
+  // the Bearer token and the slug ownership in one call.
+  const owner = await requireMemberAccessForRequest(req, memberSlug);
+  if (!owner) {
+    return NextResponse.json(
+      { ok: false, error: "Forbidden" },
+      { status: 403 },
+    );
+  }
 
   const plan = await fetchPlanById(planId);
   if (!plan) {
