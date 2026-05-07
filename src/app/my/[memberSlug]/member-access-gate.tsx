@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { requireMemberAccess } from "@/lib/auth";
+import { requireMemberAccess, getCurrentUser } from "@/lib/auth";
 
 /**
- * v0.20.0 client-side member access gate.
+ * v0.20.0 / v0.20.1 client-side member access gate.
  *
  * Wraps every page under /my/{slug}/. Three terminal states:
  *
@@ -13,17 +13,13 @@ import { requireMemberAccess } from "@/lib/auth";
  *   ok        — auth verified for this slug, render children.
  *   denied    — either no session (redirect to /login?next=...) or
  *               session exists but the user does not own this slug
- *               (render an inline 403 panel).
+ *               (render an inline 403 panel with sign-out link).
  *
- * Why client-side: M1 ships with no SSR cookie integration (no
- * @supabase/ssr dep). The same supabase-js client used in the rest of
- * the app reads the session from localStorage in the browser. A
- * future M2/M3 swap to cookie-backed sessions can move this gate to
- * the server without changing the page surface.
- *
- * The Next.js auth guide flags that layouts don't re-run on
- * navigation between dynamic-param siblings — so we re-check whenever
- * `slug` changes, not just on mount.
+ * v0.20.1: requireMemberAccess and getCurrentUser now read the
+ * SSR-cookie session, so this gate sees the same session that
+ * /auth/callback wrote. No structural change here — still a
+ * client-side gate, still re-runs on slug change (per the Next.js
+ * auth guide's partial-rendering note).
  */
 export function MemberAccessGate({
   slug,
@@ -38,7 +34,6 @@ export function MemberAccessGate({
 
   useEffect(() => {
     let cancelled = false;
-    setState("pending");
 
     void requireMemberAccess(slug).then(async (member) => {
       if (cancelled) return;
@@ -51,7 +46,6 @@ export function MemberAccessGate({
       // Distinguish "not signed in at all" from "signed in but not
       // your slug". Re-fetching the user is cheap (cached client-side)
       // and gives the right UX divergence: login redirect vs. 403.
-      const { getCurrentUser } = await import("@/lib/auth");
       const user = await getCurrentUser();
       if (cancelled) return;
 
@@ -84,12 +78,18 @@ export function MemberAccessGate({
         <p className="mt-2 text-sm text-white/60">
           You&apos;re signed in, but this isn&apos;t your member account.
         </p>
-        <Link
-          href="/"
-          className="mt-6 inline-block text-xs text-white/40 hover:text-white/70"
-        >
-          ← Back home
-        </Link>
+        <div className="mt-6 flex items-center justify-center gap-4 text-xs">
+          <Link href="/" className="text-white/40 hover:text-white/70">
+            ← Back home
+          </Link>
+          <span className="text-white/20">·</span>
+          <Link
+            href="/auth/signout"
+            className="text-white/40 hover:text-white/70"
+          >
+            Sign out
+          </Link>
+        </div>
       </main>
     );
   }
