@@ -8,6 +8,10 @@ import { redirect } from "next/navigation";
  * from the brief /book/{slug} window in v0.10.x) redirects to the new
  * canonical URL. This wrapper will be removed once the old URL surface
  * is definitely unused in the wild.
+ *
+ * v0.20.0 auth note: the destination /my/{slug} is gated by the
+ * MemberAccessGate, so a logged-out user landing on /book/{slug}
+ * cascades to /login automatically. No separate gate needed here.
  */
 export default async function BookMemberRedirect({
   params,

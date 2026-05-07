@@ -890,9 +890,23 @@ export default function MemberHome({ memberSlug }: { memberSlug: string }) {
     setBusyPlanId(plan.id);
     setOutcome(null);
     try {
+      // v0.20.0: forward the access token so the route handler can
+      // verify the caller owns memberSlug.
+      const { getSupabaseClient } = await import("@/lib/supabase");
+      const supa = getSupabaseClient();
+      const { data: sessionData2 } = supa
+        ? await supa.auth.getSession()
+        : { data: { session: null } };
+      const accessToken = sessionData2.session?.access_token ?? null;
+
       const sessionResp = await fetch("/api/stripe/create-checkout-session", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken
+            ? { Authorization: `Bearer ${accessToken}` }
+            : {}),
+        },
         body: JSON.stringify({ memberSlug: member.id, planId: plan.id }),
       });
       const sessionData = (await sessionResp.json()) as {
