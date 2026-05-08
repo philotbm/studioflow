@@ -4,7 +4,7 @@ export function GET() {
   return NextResponse.json({
     status: "ok",
     system: "studioflow",
-    version: "v0.19.0",
-    release: "Booking Recovery / Rebooking Foundation",
+    version: "v0.21.0",
+    release: "Operator + Instructor Auth (RBAC)",
   });
 }

@@ -174,3 +174,37 @@ create table if not exists plans (
     (type = 'unlimited' and credits is null)
   )
 );
+
+-- ═══ STAFF — v0.21.0 (operator + instructor RBAC) ════════════════════
+-- One row per (auth user, staff role) — the same Supabase user can
+-- ALSO hold a `members` row for self-service member access; the two
+-- coexist and login surface choice (/login vs. /staff/login) drives
+-- the routing.
+--
+-- Roles:
+--   owner       — full operator access; later milestones add owner-only
+--                 gates (refunds-only-for-owner, etc.).
+--   manager     — operator access. Reaches /app/*, /instructor/*, and
+--                 /api/admin/* in v0.21.0.
+--   instructor  — reaches /instructor/* only.
+--
+-- M3 will replace UNIQUE(user_id) with UNIQUE(studio_id, user_id) so
+-- the same person can hold roles at multiple studios.
+create table if not exists staff (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users(id),
+  full_name   text not null,
+  role        text not null check (role in ('owner','manager','instructor')),
+  created_at  timestamptz not null default now()
+);
+
+create unique index if not exists idx_staff_user_id on staff(user_id);
+
+-- Self-read policy: the proxy and server helpers query as the user's
+-- own session (anon role) and need to read THEIR row to resolve their
+-- role. M4 adds manager/owner + tenant-scoped policies for staff-list
+-- views.
+alter table staff enable row level security;
+drop policy if exists "staff can read self" on staff;
+create policy "staff can read self" on staff
+  for select using (user_id = auth.uid());

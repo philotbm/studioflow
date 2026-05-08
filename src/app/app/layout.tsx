@@ -1,55 +1,47 @@
-"use client";
+import {
+  getCurrentStaffFromCookies,
+  getCurrentUserFromCookies,
+} from "@/lib/auth";
+import { getSupabaseServerAuthClient } from "@/lib/supabase";
+import { AppShell } from "./app-shell";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { StoreProvider } from "@/lib/store";
-
-const navItems = [
-  { label: "Dashboard", href: "/app" },
-  { label: "Classes", href: "/app/classes" },
-  { label: "Members", href: "/app/members" },
-  { label: "Plans", href: "/app/plans" },
-  { label: "Revenue", href: "/app/revenue" },
-];
-
-export default function AppLayout({
+/**
+ * v0.21.0 server outer for /app/*.
+ *
+ * Auth/role gating happens in src/proxy.ts before this layout
+ * renders, so by the time we're here the caller is guaranteed to be
+ * a manager or owner. We only need to fetch the staff row to render
+ * "Signed in as …", and look up whether the same user also owns a
+ * members row (Phil's case) so we can offer a "Member view" link.
+ *
+ * Splitting the layout into a server outer + client AppShell lets
+ * the StoreProvider + usePathname-driven nav stay client-side while
+ * the SSR cookie reads happen in this file.
+ */
+export default async function AppLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
-  const pathname = usePathname();
+}: Readonly<{ children: React.ReactNode }>) {
+  const staff = await getCurrentStaffFromCookies();
+
+  // Find the member slug owned by this user, if any. UNIQUE(user_id)
+  // means at most one row.
+  let memberSlug: string | null = null;
+  const user = await getCurrentUserFromCookies();
+  if (user) {
+    const supabase = await getSupabaseServerAuthClient();
+    if (supabase) {
+      const { data } = await supabase
+        .from("members")
+        .select("slug")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      memberSlug = data?.slug ?? null;
+    }
+  }
 
   return (
-    <StoreProvider>
-      <div className="min-h-screen bg-black text-white">
-        <header className="flex items-center justify-between border-b border-white/10 px-6 py-4">
-          <span className="text-sm font-medium tracking-wide text-white/80">
-            StudioFlow App
-          </span>
-          <nav className="flex gap-6">
-            {navItems.map((item) => {
-              const isActive =
-                item.href === "/app"
-                  ? pathname === "/app"
-                  : pathname.startsWith(item.href);
-              return (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  className={`text-sm ${
-                    isActive
-                      ? "text-white font-medium"
-                      : "text-white/60 hover:text-white"
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-        </header>
-        <div className="px-6 py-8">{children}</div>
-      </div>
-    </StoreProvider>
+    <AppShell staff={staff} memberSlug={memberSlug}>
+      {children}
+    </AppShell>
   );
 }
