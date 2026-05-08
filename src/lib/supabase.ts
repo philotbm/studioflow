@@ -4,9 +4,10 @@ import {
   createServerClient,
   type CookieOptions,
 } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * Three Supabase clients now coexist in this module — they aren't
+ * Four Supabase clients coexist in this module — they aren't
  * interchangeable, and picking the wrong one for the wrong context
  * leads to silent auth bugs:
  *
@@ -27,11 +28,22 @@ import {
  *     and any future server surface that needs the session). Awaits
  *     cookies(); only callable from request scope.
  *
+ *   getSupabaseProxyAuthClient(req) — anon + cookie reading via the
+ *     NextRequest cookies API. The auth-aware client for the Next 16
+ *     proxy file (src/proxy.ts). Cannot use next/headers because
+ *     proxy runs before the request enters the App Router scope; uses
+ *     the standard @supabase/ssr middleware adapter pattern instead.
+ *     Returns both the client and the response object so refreshed
+ *     session cookies can be propagated back to the browser. Added in
+ *     v0.21.0 for operator/instructor RBAC.
+ *
  * v0.20.1: PKCE flow type is set on the browser client so the magic
  * link arrives as `?code=...` and lands at /auth/callback (which
  * runs the decision tree). Without this, supabase-js falls back to
  * implicit flow (`#access_token=...`) and the callback never runs —
- * the bug that motivated this milestone.
+ * the bug that motivated that milestone.
+ *
+ * v0.21.0: proxy auth client added — see header for context.
  */
 
 const URL_VAR = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -103,11 +115,64 @@ export async function getSupabaseServerAuthClient(): Promise<SupabaseClient | nu
           // is read-only there). Route handlers and server actions
           // succeed. supabase/ssr's docs note this is expected; the
           // session refresh middleware (if any) handles the cookie
-          // write later. M1.1 does not ship middleware — every place
-          // we mutate the session (callback, signout, claim action) is
-          // a route handler / server action where setAll succeeds.
+          // write later. v0.21.0 ships src/proxy.ts which DOES refresh
+          // session cookies on every request — Server Component reads
+          // are now reliably backed by a fresh session.
         }
       },
     },
   });
+}
+
+// ── Proxy auth client (src/proxy.ts) ─────────────────────────────────
+
+/**
+ * v0.21.0 SSR client for use inside src/proxy.ts.
+ *
+ * The proxy runs before the request reaches the App Router, so
+ * next/headers / cookies() is unavailable. We use the standard
+ * @supabase/ssr proxy/middleware adapter instead: read cookies off
+ * NextRequest, write refreshed-session cookies to the NextResponse
+ * we return. Caller pattern:
+ *
+ *   const { supabase, response } = getSupabaseProxyAuthClient(req);
+ *   const { data: { user } } = await supabase.auth.getUser();
+ *   ...gating logic...
+ *   return result ?? response;
+ *
+ * Returning `response` (rather than NextResponse.next()) propagates
+ * any cookies Supabase set during the getUser() round-trip — without
+ * this, the session would never refresh from the proxy and downstream
+ * Server Components would see a stale or missing session.
+ */
+export function getSupabaseProxyAuthClient(
+  req: NextRequest,
+): { supabase: SupabaseClient | null; response: NextResponse } {
+  let response = NextResponse.next({ request: req });
+
+  if (!URL_VAR || !ANON_VAR) {
+    return { supabase: null, response };
+  }
+
+  const supabase = createServerClient(URL_VAR, ANON_VAR, {
+    cookies: {
+      getAll() {
+        return req.cookies.getAll();
+      },
+      setAll(toSet: { name: string; value: string; options: CookieOptions }[]) {
+        // Mirror cookies on the inbound request so subsequent reads
+        // inside this proxy invocation see the refreshed session…
+        for (const { name, value } of toSet) {
+          req.cookies.set(name, value);
+        }
+        // …and rebuild the response so cookies propagate downstream.
+        response = NextResponse.next({ request: req });
+        for (const { name, value, options } of toSet) {
+          response.cookies.set(name, value, options);
+        }
+      },
+    },
+  });
+
+  return { supabase, response };
 }

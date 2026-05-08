@@ -292,3 +292,21 @@ VALUES
 (gen_random_uuid(), 'b0000001-0000-0000-0000-000000000006', 'a0000002-0000-0000-0000-000000000035', 'booked', true),
 (gen_random_uuid(), 'b0000001-0000-0000-0000-000000000006', 'a0000002-0000-0000-0000-000000000036', 'booked', true)
 ON CONFLICT DO NOTHING;
+
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- STAFF — v0.21.0 owner seed
+-- ═══════════════════════════════════════════════════════════════════════
+-- Phil (philotbm@gmail.com) is the first owner. The auth.users row only
+-- exists once Phil has signed in via /staff/login at least once, so the
+-- INSERT…SELECT below is a no-op until then; on every subsequent seed
+-- run after his first sign-in, it idempotently grants him owner.
+--
+-- Adding more staff before an invite UX exists: see SUPABASE_SETUP.md
+-- for the SQL recipe.
+
+INSERT INTO staff (user_id, full_name, role)
+SELECT id, 'Phil', 'owner'
+  FROM auth.users
+ WHERE email = 'philotbm@gmail.com'
+ON CONFLICT (user_id) DO NOTHING;

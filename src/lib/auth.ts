@@ -44,6 +44,17 @@ export type MemberAuthRow = {
   user_id: string | null;
 };
 
+/** v0.21.0 — three roles in M2; M3+ may add more. */
+export type StaffRole = "owner" | "manager" | "instructor";
+
+/** Minimal raw shape of the staff row this module returns. */
+export type StaffRow = {
+  id: string;
+  user_id: string;
+  full_name: string;
+  role: StaffRole;
+};
+
 // ── Path safety ───────────────────────────────────────────────────────
 
 /**
@@ -109,6 +120,36 @@ export async function requireMemberAccessFromCookies(
     .single();
   if (!member || member.user_id !== user.id) return null;
   return member as MemberAuthRow;
+}
+
+/**
+ * v0.21.0 — resolve the caller's staff row, if any.
+ *
+ * Reads the SSR cookie session and looks up `staff` by user_id. The
+ * staff table has a self-read RLS policy so the anon-role query
+ * succeeds and returns at most one row (UNIQUE(user_id) until M3).
+ *
+ * Returns null when:
+ *   - No session (not signed in).
+ *   - Signed in but the user has no staff row (member-only user).
+ *
+ * Layouts under /app and /instructor can safely treat null as
+ * "shouldn't be here" — the proxy has already gated the path, so the
+ * only way to reach the layout is with a valid staff row. Callers
+ * still null-check defensively in case the proxy is bypassed during
+ * local dev (e.g. NEXT_PUBLIC_SUPABASE_* env vars unset).
+ */
+export async function getCurrentStaffFromCookies(): Promise<StaffRow | null> {
+  const user = await getCurrentUserFromCookies();
+  if (!user) return null;
+  const client = await getSupabaseServerAuthClient();
+  if (!client) return null;
+  const { data } = await client
+    .from("staff")
+    .select("id, user_id, full_name, role")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  return (data as StaffRow | null) ?? null;
 }
 
 // ── Server (Bearer token) helpers — kept stable for Stripe API ────────
