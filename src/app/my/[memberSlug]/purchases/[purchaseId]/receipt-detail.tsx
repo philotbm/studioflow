@@ -97,6 +97,12 @@ export default function ReceiptDetail({
 
   useEffect(() => {
     let cancelled = false;
+    // Reset to undefined while the next fetch is in flight. The React 19
+    // react-hooks/set-state-in-effect rule prefers a parent <... key={purchaseId}>
+    // remount instead, but that would require restructuring the page-level
+    // wrapper — out of scope for the v0.21.0.x CI baseline. Tracked for a
+    // follow-up structural pass.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPurchase(undefined);
     getPurchaseForMember(memberSlug, purchaseId).then((row) => {
       if (!cancelled) setPurchase(row);

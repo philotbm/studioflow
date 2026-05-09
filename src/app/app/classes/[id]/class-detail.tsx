@@ -461,6 +461,10 @@ function WaitlistSection({
 // ── Booking activity log ────────────────────────────────────────────────
 function BookingAuditLog({ classSlug }: { classSlug: string }) {
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  // Captured once at mount and reused for relative-time labels below.
+  // React 19's react-hooks/purity rule flags Date.now() called during
+  // render; useState's initializer is the canonical workaround.
+  const [now] = useState(() => Date.now());
   const { getAuditEvents, classes } = useStore();
 
   useEffect(() => {
@@ -468,8 +472,6 @@ function BookingAuditLog({ classSlug }: { classSlug: string }) {
   }, [classSlug, getAuditEvents, classes]);
 
   if (events.length === 0) return null;
-
-  const now = Date.now();
 
   function eventColor(type: string): string {
     switch (type) {
