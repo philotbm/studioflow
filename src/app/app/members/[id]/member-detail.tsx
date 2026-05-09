@@ -355,6 +355,10 @@ function RecentLedgerPanel({
 }) {
   const { getLedger, members } = useStore();
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
+  // Captured once at mount and reused for relative-time labels below.
+  // React 19's react-hooks/purity rule flags Date.now() called during
+  // render; useState's initializer is the canonical workaround.
+  const [now] = useState(() => Date.now());
 
   useEffect(() => {
     let cancelled = false;
@@ -372,7 +376,6 @@ function RecentLedgerPanel({
   if (entries.length === 0) {
     return <p className="text-xs text-white/40">No credit ledger activity yet.</p>;
   }
-  const now = Date.now();
   const runningBalances = computeRunningBalances(entries, liveCredits);
   return (
     <ul className="flex flex-col gap-2">

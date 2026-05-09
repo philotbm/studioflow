@@ -491,6 +491,10 @@ function MemberPurchaseHistorySection({
 }) {
   const { getPurchases, members } = useStore();
   const [entries, setEntries] = useState<PurchaseRecord[] | null>(null);
+  // Captured once at mount and reused for relative-time labels below.
+  // React 19's react-hooks/purity rule flags Date.now() called during
+  // render; useState's initializer is the canonical workaround.
+  const [now] = useState(() => Date.now());
 
   useEffect(() => {
     let cancelled = false;
@@ -507,7 +511,6 @@ function MemberPurchaseHistorySection({
 
   if (!entries) return null;
 
-  const now = Date.now();
   return (
     <section className="mt-10">
       <h2 className="text-sm font-medium text-white/70">Purchase history</h2>

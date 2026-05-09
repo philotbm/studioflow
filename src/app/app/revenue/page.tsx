@@ -134,6 +134,11 @@ function RevenueContent() {
 
   useEffect(() => {
     let cancelled = false;
+    // Reset state on range change. The React 19 react-hooks/set-state-in-effect
+    // rule prefers a parent <... key={range}> remount instead, but that would
+    // require splitting RevenueContent into two components — out of scope for
+    // the v0.21.0.x CI baseline. Tracked for a follow-up structural pass.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSummary(null);
     setError(null);
     const qs = range === "lifetime" ? "" : `?range=${range}`;
