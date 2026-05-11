@@ -1,6 +1,19 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 
+// v0.22.3 diagnostic: prints at module-load time, which happens during
+// Vercel BUILD (not Runtime). If this line is missing from the build
+// log, next.config.ts isn't being loaded — the bigger-than-Sentry
+// problem. Pairs with the v0.22.1 / v0.22.2 runtime logs to triangulate
+// where the instrumentation chain breaks. Remove once Sentry capture is
+// confirmed working.
+console.log(
+  "[next.config] module loaded, NODE_ENV:",
+  process.env.NODE_ENV,
+  "VERCEL_ENV:",
+  process.env.VERCEL_ENV,
+);
+
 const nextConfig: NextConfig = {
   /* config options here */
 };
