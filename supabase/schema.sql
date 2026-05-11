@@ -1,9 +1,35 @@
--- StudioFlow v0.4.8 — Supabase Foundation Schema
--- Run this in the Supabase SQL Editor before seed.sql
+-- StudioFlow v0.22.0 — Supabase Foundation Schema
+-- Run this in the Supabase SQL Editor before seed.sql. v0.22.0 (M3
+-- multi-tenancy) added the studios table and studio_id on every
+-- tenant-scoped table — see docs/adr/0001-multi-tenancy.md.
+
+-- ═══ STUDIOS — v0.22.0 (M3 multi-tenancy) ═════════════════════════════
+-- The tenancy table. Every tenant-scoped data row references one row
+-- here via studio_id. Pre-pilot we ship a single 'demo' studio; second
+-- studio is an INSERT + CSV import, not a re-platforming.
+--
+-- plan_id is the SaaS pricing tier (starter / pro / studio), distinct
+-- from the per-studio members plan offerings (members.plan_type +
+-- plans table). member_count_cap is NULL on the studio tier (unlimited).
+-- stripe_customer_id / stripe_subscription_id are wired up by Sprint C
+-- (v0.26.0) when prod Stripe lands.
+create table if not exists studios (
+  id                     uuid primary key default gen_random_uuid(),
+  slug                   text not null unique,
+  name                   text not null,
+  plan_id                text not null default 'starter'
+                           check (plan_id in ('starter','pro','studio')),
+  member_count_cap       int,  -- 50 / 250 / NULL (starter/pro/studio)
+  stripe_customer_id     text,
+  stripe_subscription_id text,
+  created_at             timestamptz not null default now()
+);
 
 -- ═══ MEMBERS ═══════════════════════════════════════════════════════════
 create table if not exists members (
   id                       uuid primary key default gen_random_uuid(),
+  -- v0.22.0 (M3): every member belongs to exactly one studio.
+  studio_id                uuid not null references studios(id),
   slug                     text unique not null,
   full_name                text not null,
   email                    text,
@@ -33,13 +59,15 @@ create table if not exists members (
   updated_at               timestamptz not null default now()
 );
 
--- v0.20.0: at most one members row per auth user.
-create unique index if not exists idx_members_user_id
-  on members(user_id) where user_id is not null;
+-- v0.22.0 (M3): one members row per (studio, auth user). Replaces the
+-- pre-M3 idx_members_user_id which enforced one globally.
+create unique index if not exists idx_members_studio_user
+  on members(studio_id, user_id) where user_id is not null;
 
 -- ═══ CLASSES ═══════════════════════════════════════════════════════════
 create table if not exists classes (
   id                        uuid primary key default gen_random_uuid(),
+  studio_id                 uuid not null references studios(id),  -- v0.22.0 (M3)
   slug                      text unique not null,
   title                     text not null,
   instructor_name           text not null,
@@ -60,6 +88,7 @@ create table if not exists classes (
 -- ═══ CLASS_BOOKINGS ════════════════════════════════════════════════════
 create table if not exists class_bookings (
   id                uuid primary key default gen_random_uuid(),
+  studio_id         uuid not null references studios(id),  -- v0.22.0 (M3)
   class_id          uuid not null references classes(id) on delete cascade,
   member_id         uuid not null references members(id) on delete cascade,
   -- v0.8.4: legacy 'attended' dropped from the accepted set. v0.8.3
@@ -91,6 +120,7 @@ create index if not exists idx_bookings_member on class_bookings(member_id);
 -- ═══ BOOKING_EVENTS (append-only audit log) ═══════════════════════════
 create table if not exists booking_events (
   id          uuid primary key default gen_random_uuid(),
+  studio_id   uuid not null references studios(id),  -- v0.22.0 (M3)
   class_id    uuid not null references classes(id) on delete cascade,
   member_id   uuid references members(id) on delete set null,
   booking_id  uuid references class_bookings(id) on delete set null,
@@ -129,6 +159,7 @@ create index if not exists idx_events_booking on booking_events(booking_id);
 --   'operator_manual'  — operator test-purchase panel on /app/members/[id].
 create table if not exists purchases (
   id               uuid primary key default gen_random_uuid(),
+  studio_id        uuid not null references studios(id),  -- v0.22.0 (M3)
   member_id        uuid not null references members(id) on delete cascade,
   plan_id          text not null,
   source           text not null check (
@@ -162,6 +193,7 @@ create index if not exists idx_purchases_member_created
 -- their human-readable plan name (no hard delete, ever).
 create table if not exists plans (
   id           text primary key,
+  studio_id    uuid not null references studios(id),  -- v0.22.0 (M3)
   name         text not null,
   type         text not null check (type in ('class_pack','unlimited')),
   price_cents  integer not null check (price_cents >= 0),
@@ -188,17 +220,18 @@ create table if not exists plans (
 --                 /api/admin/* in v0.21.0.
 --   instructor  — reaches /instructor/* only.
 --
--- M3 will replace UNIQUE(user_id) with UNIQUE(studio_id, user_id) so
--- the same person can hold roles at multiple studios.
+-- v0.22.0 (M3) replaces UNIQUE(user_id) with UNIQUE(studio_id, user_id)
+-- so the same person can hold roles at multiple studios.
 create table if not exists staff (
   id          uuid primary key default gen_random_uuid(),
+  studio_id   uuid not null references studios(id),  -- v0.22.0 (M3)
   user_id     uuid not null references auth.users(id),
   full_name   text not null,
   role        text not null check (role in ('owner','manager','instructor')),
   created_at  timestamptz not null default now()
 );
 
-create unique index if not exists idx_staff_user_id on staff(user_id);
+create unique index if not exists idx_staff_studio_user on staff(studio_id, user_id);
 
 -- Self-read policy: the proxy and server helpers query as the user's
 -- own session (anon role) and need to read THEIR row to resolve their
