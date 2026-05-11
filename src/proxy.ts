@@ -143,6 +143,35 @@ export async function proxy(req: NextRequest) {
   return response;
 }
 
+/*
+ * SERVER ACTIONS WARNING — READ BEFORE EDITING THE MATCHER
+ * ────────────────────────────────────────────────────────
+ * The matcher below is the URL-path gate for staff surfaces. It
+ * does NOT, by itself, gate Server Functions (server actions).
+ * From the Next.js 16 proxy docs
+ * (node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md):
+ *
+ *   > Server Functions are not separate routes in this chain. They
+ *   > are handled as POST requests to the route where they are used,
+ *   > so a Proxy matcher that excludes a path will also skip Server
+ *   > Function calls on that path.
+ *   >
+ *   > A matcher change or a refactor that moves a Server Function
+ *   > to a different route can silently remove Proxy coverage.
+ *   > Always verify authentication and authorization inside each
+ *   > Server Function rather than relying on Proxy alone.
+ *
+ * Implication for this codebase: any staff-side server action —
+ * including ones invoked from pages under `/app/*` or
+ * `/instructor/*` — MUST call `requireRole()` from src/lib/auth.ts
+ * in the action handler body. The proxy is the first line of
+ * defense; `requireRole` in the handler is the second. Do not rely
+ * on this proxy alone.
+ *
+ * See src/lib/auth.ts:requireRole, src/lib/auth-errors.ts, and the
+ * `chore/staff-server-action-guard` ticket (v0.21.0.3) that re-added
+ * the helper after M2 dropped it.
+ */
 export const config = {
   /*
    * Allow-list. Anything not listed here doesn't enter the proxy at
