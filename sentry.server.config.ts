@@ -13,6 +13,15 @@
  */
 import * as Sentry from "@sentry/nextjs";
 
+// v0.22.1 diagnostic: confirm via Vercel Runtime Logs that this module
+// is actually being loaded by instrumentation.ts's register() hook AND
+// that the DSN env var is reaching the server process. Remove once
+// runtime capture is confirmed working.
+console.log(
+  "[Sentry] server config booting, DSN:",
+  process.env.NEXT_PUBLIC_SENTRY_DSN ? "set" : "missing",
+);
+
 Sentry.init({
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
   environment: process.env.VERCEL_ENV ?? "development",
