@@ -17,7 +17,7 @@ Notable Next 16 specifics already encountered:
 - **Staff** (owner / manager / instructor) sign in at `/staff/login` → `/auth/callback?intent=staff` → `/app` (M2 / v0.21.0).
 - The same Supabase user can hold both a `members` row and a `staff` row; the login surface choice (`/login` vs. `/staff/login`) is the disambiguator.
 - `src/proxy.ts` gates `/app/*`, `/instructor/*`, `/api/admin/*`, `/api/qa/*`, `/api/dev/*`. Everything else (including `/api/stripe/webhook`, `/api/health`, `/checkin/*`, `/book/*`, `/my/*`) is intentionally not in the proxy matcher.
-- RLS is **off** on the data tables (M4 will turn it on); **on** for `staff` with a single self-read policy.
+- RLS is **ON** for every tenant-scoped table (v0.23.0 / M4). One `tenant_isolation` policy per table — `FOR ALL` with `studio_id = current_studio_id()` in both `USING` and `WITH CHECK`. The v0.21.0 `staff can read self` policy is kept additively as the bootstrap for `current_studio_id()` resolution (PostgreSQL evaluates multiple permissive policies as OR). Every PL/pgSQL `sf_*` function is `SECURITY DEFINER` and filters by studio_id internally, so RPC paths bypass RLS safely. Service role bypasses RLS too — used by exactly four exception routes (see "Data access" below).
 - Multi-tenant `studio_id` plumbing landed in v0.22.0 (M3). One demo studio in prod; second studio is an `INSERT INTO studios` + CSV import.
 
 **Staff-side server actions must call `requireRole(['owner', 'manager'])` (or the appropriate role list) in the action body.** The proxy matcher gates URL paths, but Server Functions are POSTs to the page route they live on — so a matcher refactor that moves a page out of the allow-list silently drops the server action's proxy coverage (per the Next.js 16 proxy docs, `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md`). The proxy is the *first* line of defense; `requireRole` from `src/lib/auth.ts` in the handler is the *second*. Do not rely on either alone. See `src/lib/auth-errors.ts` for the canonical try/catch snippets that map `AuthRequired` / `Forbidden` to redirects (server actions / server components) or JSON responses (route handlers).
@@ -35,13 +35,25 @@ Tenant-scoped table list lives in `TENANT_SCOPED_TABLES` inside `src/lib/db.ts`.
 
 PL/pgSQL RPC functions (`sf_book_member`, `sf_cancel_booking`, etc.) accept an optional `p_studio_id uuid DEFAULT NULL` parameter and COALESCE with `current_studio_id()` if not passed. Calls from cookie-authed surfaces (operator pages, instructor, /api/admin/*, /api/qa/*, /api/dev/*) carry the user's JWT — `current_studio_id()` resolves naturally inside the function, so the application code doesn't need to pass `p_studio_id` explicitly.
 
-**Exceptions that MUST use `getSupabaseClient()` directly** (each with an inline comment naming the reason):
-- `src/app/api/stripe/webhook/route.ts` — server-to-server, no session. After Sprint C, studio_id will be resolved from Stripe Customer metadata.
-- `src/app/api/attendance/check-in/route.ts` — anonymous QR-scan kiosk. studio_id resolved from the class row by slug (single-studio safe; multi-studio future will encode studio in the URL).
-- `src/app/api/stripe/create-checkout-session/route.ts` — Bearer-token auth (not cookie). studio_id resolved from the validated member row.
-- `src/lib/entitlements/applyPurchase.ts` — called from both the Stripe webhook (no session) and operator surfaces. `sf_apply_purchase` resolves studio_id from `members.studio_id` internally, and the post-RPC purchases UPDATE is by PK.
-- `src/lib/auth.ts`, `src/proxy.ts`, `src/app/auth/callback/route.ts`, `src/app/auth/claim/*` — auth-row reads against `members`/`staff` for identity resolution.
-- `src/app/app/layout.tsx` — operator's own member-row lookup via the cookie-bound auth client (different code path from scopedQuery, intentional).
-- Any query against the `studios` table itself.
+**Exceptions that bypass `scopedQuery()`** (each with an inline comment naming the reason):
 
-See `docs/adr/0001-multi-tenancy.md` Decisions 1, 2, 6 and `docs/specs/M3_multi_tenancy.md` Section 4.
+- **Service-role client** (`getSupabaseServiceClient()` from `src/lib/supabase.ts`). Bypasses RLS and has full cross-studio access — server-only, NEVER expose to a browser. Used by exactly these four surfaces:
+  - `src/app/api/stripe/webhook/route.ts` — Stripe signature verifies the caller. studio_id resolved from event metadata (Sprint C).
+  - `src/app/api/attendance/check-in/route.ts` — anonymous QR kiosk. studio_id resolved from the class row by slug (single-studio-pilot safe).
+  - `src/app/api/stripe/create-checkout-session/route.ts` — Bearer-token auth (not cookie). studio_id resolved from the validated member row.
+  - `src/lib/entitlements/applyPurchase.ts` — called from both the Stripe webhook and operator surfaces. `sf_apply_purchase` resolves studio_id from `members.studio_id` internally.
+  - Plus the helper `src/lib/auth.ts requireMemberAccessForRequest` — logically part of the Bearer-auth route above; the `user_id === auth.uid()` check after the read is what keeps the service-role lookup honest.
+  - If you add a fifth, document it in `src/lib/supabase.ts` AND in ADR-0001 Decision 1.
+  - `SUPABASE_SERVICE_ROLE_KEY` MUST be set in Vercel **Production scope only** (not Preview, not Development).
+
+- **Anon client** (`getSupabaseClient()`). Bypasses no RLS but is used by surfaces that need a session-free Supabase client for non-tenant-scoped reads:
+  - `src/lib/auth.ts getCurrentUserFromRequest` — just calls `supabase.auth.getUser(token)` (JWT validation, not RLS-gated).
+  - Any read against `auth.users` (Supabase-owned, not in this RLS scheme).
+
+- **Cookie auth client** (`getSupabaseServerAuthClient()`). RLS-gated with the caller's auth.uid(). Used by `scopedQuery()` internally + by:
+  - `src/lib/auth.ts` member/staff identity reads — RLS allows because the staff self-read policy + the tenant_isolation policy on members both pass.
+  - `src/proxy.ts` staff self-read — same.
+  - `src/app/auth/callback`, `src/app/auth/claim/*` — auth resolution paths.
+  - `src/app/app/layout.tsx` — operator's own member-row lookup.
+
+See `docs/adr/0001-multi-tenancy.md` Decisions 1, 2, 6, `docs/specs/M3_multi_tenancy.md` Section 4, and `docs/specs/M4_rls.md`.
