@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { scopedQuery } from "@/lib/db";
+import { getSupabaseClient } from "@/lib/supabase";
 import { logger } from "@/lib/logger";
 
 /**
@@ -59,7 +59,14 @@ export async function POST(req: Request) {
   }
   const source = sourceRaw as Source;
 
-  const client = await scopedQuery();
+  // Intentional anonymous exception (v0.22.0 / ADR-0001 Decision 2):
+  // the check-in kiosk POSTs here without a cookie session, so
+  // current_studio_id() inside scopedQuery would resolve to NULL.
+  // The class-slug lookup further down resolves studio_id from the
+  // class row; subsequent writes carry that studio_id explicitly.
+  // At pilot scale (single studio) slug uniqueness keeps this safe;
+  // post-pilot the kiosk URL will need to encode the studio.
+  const client = getSupabaseClient();
   if (!client) {
     return bad(
       "no_client",
@@ -68,26 +75,28 @@ export async function POST(req: Request) {
     );
   }
 
-  // ── Resolve member and class (minimal columns — avoid depending on
-  //    check_in_window_minutes which may not exist in the live schema) ──
-  const { data: member, error: memberErr } = await client
-    .from("members")
-    .select("id")
-    .eq("slug", memberSlug)
-    .maybeSingle();
-  if (memberErr) return bad("lookup_failed", memberErr.message, 500);
-  if (!member) {
-    return bad("member_not_found", `Member not found: ${memberSlug}`, 404);
-  }
-
+  // ── Resolve class first; its studio_id scopes every subsequent
+  //    query so the member lookup + bookings + audit row all land in
+  //    the same studio (v0.22.0 / M3).
   const { data: cls, error: classErr } = await client
     .from("classes")
-    .select("id, starts_at, ends_at")
+    .select("id, studio_id, starts_at, ends_at")
     .eq("slug", classSlug)
     .maybeSingle();
   if (classErr) return bad("lookup_failed", classErr.message, 500);
   if (!cls) {
     return bad("class_not_found", `Class not found: ${classSlug}`, 404);
+  }
+
+  const { data: member, error: memberErr } = await client
+    .from("members")
+    .select("id")
+    .eq("slug", memberSlug)
+    .eq("studio_id", cls.studio_id)
+    .maybeSingle();
+  if (memberErr) return bad("lookup_failed", memberErr.message, 500);
+  if (!member) {
+    return bad("member_not_found", `Member not found: ${memberSlug}`, 404);
   }
 
   // Optional window column — only use if present. Schema cache errors
@@ -171,6 +180,7 @@ export async function POST(req: Request) {
   const { error: auditErr } = await client.from("booking_events").insert({
     class_id: cls.id,
     member_id: member.id,
+    studio_id: cls.studio_id,
     booking_id: booking.id,
     event_type: "checked_in",
     event_label: `Checked in (${source})`,

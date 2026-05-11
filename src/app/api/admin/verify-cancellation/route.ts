@@ -95,7 +95,7 @@ async function handle(req: Request) {
     // Book. sf_book_member will either succeed ("booked"/"waitlisted")
     // or block with an access payload. We surface both outcomes verbatim
     // so the trace is honest about what actually happened.
-    // TODO(M3): pass studio_id explicitly once sf_book_member is studio-scoped.
+    // v0.22.0: cookie-auth client → JWT → sf_book_member resolves studio.
     const bookRes = await client.rpc("sf_book_member", {
       p_class_slug: classSlug,
       p_member_slug: memberSlug,
@@ -128,7 +128,7 @@ async function handle(req: Request) {
     // Cancel — server picks on-time vs late_cancel based on class timing
     // and cancellation_window_hours. We don't force a branch, we
     // observe which one the server chose.
-    // TODO(M3): pass studio_id explicitly once sf_cancel_booking is studio-scoped.
+    // v0.22.0: cookie-auth client → JWT → sf_cancel_booking resolves studio.
     const cancelRes = await client.rpc("sf_cancel_booking", {
       p_class_slug: classSlug,
       p_member_slug: memberSlug,

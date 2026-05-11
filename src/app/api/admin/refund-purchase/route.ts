@@ -57,7 +57,8 @@ export async function POST(req: Request) {
     );
   }
 
-  // TODO(M3): pass studio_id explicitly once sf_refund_purchase is studio-scoped.
+  // v0.22.0: sf_refund_purchase resolves studio_id from purchases.studio_id
+  // by p_purchase_id internally — no need to pass p_studio_id here.
   const { data, error } = await client.rpc("sf_refund_purchase", {
     p_purchase_id: purchaseId,
   });

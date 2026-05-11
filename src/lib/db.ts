@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getSupabaseClient } from "./supabase";
+import { getSupabaseServerAuthClient } from "./supabase";
 import type { Plan, PlanType } from "./plans";
 import type {
   MemberAccessRow,
@@ -26,31 +26,119 @@ import type {
 } from "@/app/app/members/data";
 
 /**
- * v0.21.0.5 — Supabase server client for queries against tenant-scoped
- * tables (members, staff, classes, class_bookings, booking_events,
- * credit_transactions, plans, purchases, and views derived from them).
+ * v0.22.0 (M3) — Supabase server client wrapped in a Proxy that
+ * auto-applies the caller's studio_id to every query against a
+ * tenant-scoped table.
  *
- * Today (v0.21.0.5): identical to getSupabaseClient() — async
- * pass-through. Returns `null` if env vars are missing so callers can
- * surface the same 503/error response they always have.
+ * Wraps the COOKIE-BOUND auth client (getSupabaseServerAuthClient).
+ * `current_studio_id()` reads `auth.uid()`, which is only meaningful
+ * when the request carries the user's Supabase session — the anon
+ * client (getSupabaseClient) sends only the anon JWT, where sub is
+ * null and current_studio_id() returns NULL.
  *
- * After M3 (v0.22.0): proxies the client so .from(<tenant_scoped>)
- * auto-applies .eq('studio_id', current_studio_id()) and the same
- * predicate to inserts/updates. Call sites do NOT change between
- * v0.21.0.5 and v0.22.0 — only this function's body.
+ * Path A per docs/specs/M3_multi_tenancy.md Section 4: resolve
+ * studio_id ONCE per scopedQuery() call via the
+ * `current_studio_id()` RPC, then chain `.eq('studio_id', X)` on
+ * SELECT/UPDATE/DELETE and inject `studio_id: X` into INSERT/UPSERT
+ * values. RPC calls go through unchanged — PL/pgSQL functions accept
+ * an optional p_studio_id parameter and fall back to
+ * current_studio_id() if not passed.
  *
- * Use getSupabaseClient() directly only for:
+ * Tenant-scoped tables are listed in TENANT_SCOPED_TABLES below.
+ * Adding a new tenant-scoped table is one-line + schema migration.
+ *
+ * Use getSupabaseClient() directly (NOT scopedQuery) for surfaces
+ * that lack a cookie session:
+ *   - the Stripe webhook (server-to-server, no caller session;
+ *     studio_id resolved from event metadata)
+ *   - /api/attendance/check-in (anonymous QR-scan kiosk; studio_id
+ *     resolved from the class row by slug — at pilot scale slugs
+ *     are globally unique, so single-studio is safe)
+ *   - /api/stripe/create-checkout-session (Bearer-token auth, not
+ *     cookie; studio_id resolved from the validated member row)
  *   - auth-row reads (auth.users, the staff self-read pattern in
  *     src/lib/auth.ts / src/proxy.ts)
- *   - the `studios` table itself (lands in M3)
- *   - intentional cross-tenant operations (the Stripe webhook
- *     derives studio_id from event metadata, not request context) —
- *     these must carry an inline comment naming the reason.
+ *   - the `studios` table itself
  *
- * See docs/adr/0001-multi-tenancy.md Decision 6.
+ * Each exception MUST carry an inline comment naming the reason.
+ *
+ * NULL studio_id (signed-in user with neither a staff nor a members
+ * row) → filter with a sentinel zero-UUID so queries return []
+ * cleanly. RPCs see NULL → return { error: 'no_studio_context' }.
+ *
+ * See docs/adr/0001-multi-tenancy.md Decisions 1, 2, 6.
  */
+const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
+  "members",
+  "staff",
+  "classes",
+  "class_bookings",
+  "booking_events",
+  "credit_transactions",
+  "purchases",
+  "plans",
+  "v_members_with_access",
+  // Add: any tenant-scoped table or view added post-M3 (e.g.
+  // class_templates in Sprint A, pending_actions / action_events in
+  // Sprint D).
+]);
+
+// Sentinel for sessions with no studio context (anonymous, or a
+// signed-in user with neither a staff nor a members row). Filtering on
+// this yields zero rows by design.
+const ANON_STUDIO_SENTINEL = "00000000-0000-0000-0000-000000000000";
+
 export async function scopedQuery(): Promise<SupabaseClient | null> {
-  return getSupabaseClient();
+  const client = await getSupabaseServerAuthClient();
+  if (!client) return null;
+
+  const { data: studioIdRaw } = await client.rpc("current_studio_id");
+  const studioId =
+    typeof studioIdRaw === "string" && studioIdRaw.length > 0
+      ? studioIdRaw
+      : ANON_STUDIO_SENTINEL;
+
+  const wrappedClient = new Proxy(client, {
+    get(target, prop, receiver) {
+      if (prop !== "from") return Reflect.get(target, prop, receiver);
+      return function from(table: string) {
+        const builder = target.from(table);
+        if (!TENANT_SCOPED_TABLES.has(table)) return builder;
+        return wrapTenantScopedBuilder(builder, studioId);
+      };
+    },
+  });
+  return wrappedClient;
+}
+
+// Intercepts the PostgrestQueryBuilder returned by .from(<tenant_scoped>):
+//   - select / update / delete → chain .eq('studio_id', X) onto the
+//     resulting FilterBuilder so the WHERE clause carries the predicate.
+//   - insert / upsert → merge studio_id into the values, so the new row
+//     is stamped with the caller's studio.
+// Methods we don't recognise pass through bound to the original builder.
+function wrapTenantScopedBuilder(builder: object, studioId: string): object {
+  return new Proxy(builder, {
+    get(target, prop, receiver) {
+      const original = Reflect.get(target, prop, receiver);
+      if (prop === "select" || prop === "update" || prop === "delete") {
+        return function (...args: unknown[]) {
+          const filter = (original as (...a: unknown[]) => { eq: (col: string, v: string) => unknown })
+            .apply(target, args);
+          return filter.eq("studio_id", studioId);
+        };
+      }
+      if (prop === "insert" || prop === "upsert") {
+        return function (values: unknown, ...rest: unknown[]) {
+          const scoped = Array.isArray(values)
+            ? values.map((v) => ({ ...(v as Record<string, unknown>), studio_id: studioId }))
+            : { ...(values as Record<string, unknown>), studio_id: studioId };
+          return (original as (...a: unknown[]) => unknown).apply(target, [scoped, ...rest]);
+        };
+      }
+      return typeof original === "function" ? original.bind(target) : original;
+    },
+  });
 }
 
 /** Throws if Supabase client is not initialized. Internal — db.ts only. */
@@ -393,7 +481,10 @@ export async function fetchBookingEventsForClass(classSlug: string): Promise<Aud
 
 /** Helper: call an RPC function and throw on error */
 async function callRpc<T>(name: string, params: Record<string, unknown>): Promise<T> {
-  // TODO(M3): pass studio_id explicitly once these RPCs are studio-scoped.
+  // v0.22.0: requireClient() returns the cookie-bound auth client; the
+  // RPC call carries the caller's JWT, so PL/pgSQL functions resolve
+  // current_studio_id() from auth.uid() automatically (their p_studio_id
+  // parameter defaults to NULL and COALESCEs to current_studio_id()).
   const { data, error } = await (await requireClient()).rpc(name, params);
   if (error) {
     console.error(`[${name}] RPC failed:`, error.message);
@@ -433,7 +524,8 @@ export async function bookMemberIntoClass(
   // structured reason. This is NOT an error — it's a normal domain
   // outcome — so we bypass the callRpc helper (which would throw on
   // error-keyed responses) and inspect the raw response ourselves.
-  // TODO(M3): pass studio_id explicitly once sf_book_member is studio-scoped.
+  // v0.22.0: cookie-auth client → JWT carried → sf_book_member resolves
+  // current_studio_id() internally.
   const { data, error } = await (await requireClient()).rpc("sf_book_member", {
     p_class_slug: classSlug,
     p_member_slug: memberSlug,
@@ -533,7 +625,7 @@ export async function markAttendance(
   memberSlug: string,
   outcome: AttendanceOutcome,
 ): Promise<MarkAttendanceResult> {
-  // TODO(M3): pass studio_id explicitly once sf_mark_attendance is studio-scoped.
+  // v0.22.0: cookie-auth client → JWT → sf_mark_attendance resolves studio.
   const { data, error } = await (await requireClient()).rpc("sf_mark_attendance", {
     p_class_slug: classSlug,
     p_member_slug: memberSlug,
@@ -678,7 +770,7 @@ export type FinaliseClassResult = {
 export async function finaliseClass(
   classSlug: string,
 ): Promise<FinaliseClassResult> {
-  // TODO(M3): pass studio_id explicitly once sf_finalise_class is studio-scoped.
+  // v0.22.0: cookie-auth client → JWT → sf_finalise_class resolves studio.
   const { data, error } = await (await requireClient()).rpc("sf_finalise_class", {
     p_class_slug: classSlug,
   });
@@ -776,7 +868,7 @@ export async function adjustMemberCredit(
   reasonCode: ManualAdjustReason,
   note: string | null,
 ): Promise<AdjustCreditResult> {
-  // TODO(M3): pass studio_id explicitly once sf_adjust_credit is studio-scoped.
+  // v0.22.0: cookie-auth client → JWT → sf_adjust_credit resolves studio.
   const { data, error } = await (await requireClient()).rpc("sf_adjust_credit", {
     p_member_slug: memberSlug,
     p_delta: delta,

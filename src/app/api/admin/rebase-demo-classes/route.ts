@@ -1,6 +1,18 @@
 import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
+// TODO(post-M3): this cron iterates every classes row but doesn't filter
+// by studio. Pre-M3 (single studio) that was fine. Post-M3 it's
+// implicitly safe because scopedQuery's proxy now scopes every
+// .from('classes') query to the operator's studio_id — but the cron is
+// only really meaningful for the demo studio's seeded classes. Two
+// follow-ups to consider:
+//   (a) outer-loop over studios.slug='demo' explicitly (operator-
+//       invoked) instead of relying on the implicit scope, or
+//   (b) retire this endpoint in favour of Sprint A recurring-templates
+//       work (v0.24.0), at which point demo classes are derived from
+//       a per-studio template rather than rebased by cron.
+
 /**
  * v0.9.5 Operational Baseline — demo class rebase.
  *
