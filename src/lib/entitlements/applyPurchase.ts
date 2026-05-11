@@ -1,5 +1,5 @@
-import { scopedQuery } from "@/lib/db";
-import { fetchPlanById } from "@/lib/plans-db";
+import { getSupabaseClient } from "@/lib/supabase";
+import type { Plan } from "@/lib/plans";
 
 /**
  * v0.14.0 shared fulfillment entry point.
@@ -83,32 +83,51 @@ export type ApplyPurchaseResult = ApplyPurchaseOk | ApplyPurchaseErr;
 export async function applyPurchase(
   input: ApplyPurchaseInput,
 ): Promise<ApplyPurchaseResult> {
-  // v0.14.0: resolve plan metadata from DB. No hardcoded catalogue.
-  const plan = await fetchPlanById(input.planId);
-  if (!plan) {
+  // Intentional cross-session exception (v0.22.0 / ADR-0001 Decision 2):
+  // this function is called from /api/stripe/webhook (server-to-server,
+  // no caller session) and from /api/dev/fake-purchase + the operator
+  // panel (cookie session). The sf_apply_purchase RPC resolves studio_id
+  // from the p_member_id row internally, and the post-RPC purchases
+  // UPDATE filters by id (PK, globally unique). So we don't need
+  // scopedQuery's session-aware proxy here — the anon client + RPC
+  // gives us the right behaviour from every caller.
+  const client = getSupabaseClient();
+  if (!client) {
+    return {
+      ok: false,
+      error: "Supabase client is not configured",
+      code: "no_supabase",
+    };
+  }
+
+  // v0.22.0: plan lookup via the same anon client. plans.id is the PK
+  // and is globally unique today; multi-studio will revisit.
+  const { data: planRow, error: planErr } = await client
+    .from("plans")
+    .select("id, name, type, price_cents, credits, active, created_at")
+    .eq("id", input.planId)
+    .maybeSingle();
+  if (planErr || !planRow) {
     return {
       ok: false,
       error: `Unknown plan: ${input.planId}`,
       code: "unknown_plan",
     };
   }
-  // v0.14.1: belt-and-braces. Even if a client bypasses the active-only
-  // filter on the purchase surface, we refuse to grant an entitlement
-  // for an inactive plan.
+  const plan: Plan = {
+    id: planRow.id,
+    name: planRow.name,
+    type: planRow.type,
+    priceCents: planRow.price_cents,
+    credits: planRow.credits,
+    active: planRow.active,
+    createdAt: planRow.created_at,
+  };
   if (!plan.active) {
     return {
       ok: false,
       error: `Plan is inactive: ${input.planId}`,
       code: "inactive_plan",
-    };
-  }
-
-  const client = await scopedQuery();
-  if (!client) {
-    return {
-      ok: false,
-      error: "Supabase client is not configured",
-      code: "no_supabase",
     };
   }
 
@@ -133,7 +152,8 @@ export async function applyPurchase(
   // + the purchase-health reporting), per the original brief's
   // "if removal is risky, keep but make it visible" guidance.
   let legacyFallbackUsed = false;
-  // TODO(M3): pass studio_id explicitly once sf_apply_purchase is studio-scoped.
+  // v0.22.0: sf_apply_purchase resolves studio_id from members.studio_id
+  // by p_member_id internally — no need to pass p_studio_id here.
   let rpcResult = await client.rpc("sf_apply_purchase", {
     p_member_id: input.memberId,
     p_plan_id: plan.id,

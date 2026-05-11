@@ -77,7 +77,7 @@ async function handle(req: Request) {
 
   try {
     const creditsBefore = await readCredits(client, memberSlug);
-    // TODO(M3): pass studio_id explicitly once sf_promote_member is studio-scoped.
+    // v0.22.0: cookie-auth client → JWT → sf_promote_member resolves studio.
     const promRes = await client.rpc("sf_promote_member", {
       p_class_slug: classSlug,
       p_member_slug: memberSlug,

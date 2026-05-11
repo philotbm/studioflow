@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
-import { scopedQuery } from "@/lib/db";
+import { getSupabaseClient } from "@/lib/supabase";
 import { requireMemberAccessForRequest } from "@/lib/auth";
 import { logger } from "@/lib/logger";
-import { fetchPlanById } from "@/lib/plans-db";
-import { planDescription } from "@/lib/plans";
+import { planDescription, type Plan } from "@/lib/plans";
 
 /**
  * POST /api/stripe/create-checkout-session
@@ -62,24 +61,13 @@ export async function POST(req: Request) {
     );
   }
 
-  const plan = await fetchPlanById(planId);
-  if (!plan) {
-    return NextResponse.json(
-      { ok: false, error: `Unknown plan: ${planId}` },
-      { status: 400 },
-    );
-  }
-  if (!plan.active) {
-    // v0.14.1: inactive plans are hidden from the member purchase
-    // surface, but a stale client state could still POST one. Reject
-    // loudly so the member doesn't get a confusing partial flow.
-    return NextResponse.json(
-      { ok: false, error: `This plan isn't available any more.` },
-      { status: 400 },
-    );
-  }
-
-  const client = await scopedQuery();
+  // Intentional Bearer-auth exception (v0.22.0 / ADR-0001 Decision 2):
+  // this route authenticates via the Authorization: Bearer header (the
+  // member's access token validated above by requireMemberAccessForRequest),
+  // not the cookie session that scopedQuery() relies on for
+  // current_studio_id(). Plan + member lookups go through the anon
+  // client; studio_id is resolved from the validated member row.
+  const client = getSupabaseClient();
   if (!client) {
     return NextResponse.json(
       { ok: false, error: "Supabase not configured" },
@@ -89,13 +77,44 @@ export async function POST(req: Request) {
 
   const { data: member, error: memErr } = await client
     .from("members")
-    .select("id, slug")
+    .select("id, slug, studio_id")
     .eq("slug", memberSlug)
     .single();
   if (memErr || !member) {
     return NextResponse.json(
       { ok: false, error: `Member not found: ${memberSlug}` },
       { status: 404 },
+    );
+  }
+
+  const { data: planRow, error: planErr } = await client
+    .from("plans")
+    .select("id, name, type, price_cents, credits, active, created_at")
+    .eq("id", planId)
+    .eq("studio_id", member.studio_id)
+    .maybeSingle();
+  if (planErr || !planRow) {
+    return NextResponse.json(
+      { ok: false, error: `Unknown plan: ${planId}` },
+      { status: 400 },
+    );
+  }
+  const plan: Plan = {
+    id: planRow.id,
+    name: planRow.name,
+    type: planRow.type,
+    priceCents: planRow.price_cents,
+    credits: planRow.credits,
+    active: planRow.active,
+    createdAt: planRow.created_at,
+  };
+  if (!plan.active) {
+    // v0.14.1: inactive plans are hidden from the member purchase
+    // surface, but a stale client state could still POST one. Reject
+    // loudly so the member doesn't get a confusing partial flow.
+    return NextResponse.json(
+      { ok: false, error: `This plan isn't available any more.` },
+      { status: 400 },
     );
   }
 
