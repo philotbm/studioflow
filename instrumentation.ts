@@ -23,8 +23,19 @@
 export { captureRequestError as onRequestError } from "@sentry/nextjs";
 
 export async function register(): Promise<void> {
+  // v0.22.2 diagnostic: v0.22.1 boot logs never appeared in Vercel
+  // Runtime Logs, so register() is either not being called at all or
+  // not dispatching to the server config branch. These four lines
+  // distinguish those failure modes. Remove once runtime capture is
+  // confirmed working.
+  console.log(
+    "[instrumentation] register() called, NEXT_RUNTIME:",
+    process.env.NEXT_RUNTIME,
+  );
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    console.log("[instrumentation] nodejs branch entered, awaiting import");
     await import("./sentry.server.config");
+    console.log("[instrumentation] nodejs branch import resolved");
   }
   if (process.env.NEXT_RUNTIME === "edge") {
     await import("./sentry.edge.config");
