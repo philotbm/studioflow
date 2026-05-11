@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { applyPurchase } from "@/lib/entitlements/applyPurchase";
 import { logger } from "@/lib/logger";
-import { getSupabaseClient } from "@/lib/supabase";
+import { getSupabaseServiceClient } from "@/lib/supabase";
 
 /**
  * POST /api/stripe/webhook
@@ -84,14 +84,17 @@ export async function POST(req: Request) {
     });
   }
 
-  // Intentional cross-tenant exception (v0.21.0.5 / ADR-0001): the Stripe
-  // webhook is server-to-server with no caller session, so studio_id
-  // must come from event metadata (set when the checkout session was
-  // created), not from current_studio_id(). Keep getSupabaseClient()
-  // here — do NOT switch to scopedQuery() even after M3 lands.
-  const client = getSupabaseClient();
+  // Intentional cross-tenant exception (v0.23.0 / ADR-0001 Decision 1):
+  // the Stripe webhook is server-to-server with no caller session, so
+  // current_studio_id() would return NULL and every RLS-gated query
+  // would yield empty results. Service role bypasses RLS — required
+  // for this surface. studio_id comes from event metadata (Sprint C)
+  // / the member row, not from current_studio_id(). Do NOT switch to
+  // scopedQuery() or getSupabaseClient() here.
+  const client = getSupabaseServiceClient();
   if (!client) {
     // 500 so Stripe retries — Supabase should be configured in prod.
+    // SUPABASE_SERVICE_ROLE_KEY must be set in Vercel Production scope.
     return NextResponse.json(
       { received: false, error: "Supabase not configured" },
       { status: 500 },

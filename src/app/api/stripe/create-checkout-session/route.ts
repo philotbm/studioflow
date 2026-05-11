@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
-import { getSupabaseClient } from "@/lib/supabase";
+import { getSupabaseServiceClient } from "@/lib/supabase";
 import { requireMemberAccessForRequest } from "@/lib/auth";
 import { logger } from "@/lib/logger";
 import { planDescription, type Plan } from "@/lib/plans";
@@ -61,13 +61,14 @@ export async function POST(req: Request) {
     );
   }
 
-  // Intentional Bearer-auth exception (v0.22.0 / ADR-0001 Decision 2):
+  // Intentional Bearer-auth exception (v0.23.0 / ADR-0001 Decision 1):
   // this route authenticates via the Authorization: Bearer header (the
   // member's access token validated above by requireMemberAccessForRequest),
   // not the cookie session that scopedQuery() relies on for
-  // current_studio_id(). Plan + member lookups go through the anon
-  // client; studio_id is resolved from the validated member row.
-  const client = getSupabaseClient();
+  // current_studio_id(). Service role bypasses RLS — required for this
+  // surface. studio_id is resolved from the validated member row.
+  // SUPABASE_SERVICE_ROLE_KEY must be set in Vercel Production scope.
+  const client = getSupabaseServiceClient();
   if (!client) {
     return NextResponse.json(
       { ok: false, error: "Supabase not configured" },

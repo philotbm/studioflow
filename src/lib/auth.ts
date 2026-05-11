@@ -3,6 +3,7 @@ import {
   getSupabaseClient,
   getSupabaseBrowserAuthClient,
   getSupabaseServerAuthClient,
+  getSupabaseServiceClient,
 } from "./supabase";
 import { AuthRequired, Forbidden } from "./auth-errors";
 
@@ -218,13 +219,25 @@ export async function getCurrentUserFromRequest(
   return data.user ?? null;
 }
 
+/**
+ * v0.23.0 (M4) — the members lookup runs against the service-role
+ * client because the Bearer-auth caller has no cookie session, so
+ * current_studio_id() returns NULL and the tenant_isolation RLS
+ * policy would block the read. This helper is the gatekeeper for
+ * /api/stripe/create-checkout-session — it validates the JWT, then
+ * confirms the requested slug belongs to that user before the
+ * route's own service-role queries run. Compare member.user_id ===
+ * user.id below: that check is what makes the service-role read
+ * safe — we never return a member row that doesn't match the
+ * authenticated JWT, regardless of which studio it sits in.
+ */
 export async function requireMemberAccessForRequest(
   req: Request,
   slug: string,
 ): Promise<MemberAuthRow | null> {
   const user = await getCurrentUserFromRequest(req);
   if (!user) return null;
-  const client = getSupabaseClient();
+  const client = getSupabaseServiceClient();
   if (!client) return null;
   const { data: member } = await client
     .from("members")
