@@ -1,11 +1,13 @@
--- StudioFlow v0.8.4.1 — Economic Engine + Check-In Truth (canonical)
+-- StudioFlow v0.22.0 — Economic Engine + Check-In Truth + Multi-tenancy (canonical)
 --
 -- This file is the CURRENT STATE of all StudioFlow PL/pgSQL — run it in
 -- the Supabase SQL Editor after schema.sql when setting up a fresh
--- project. For incremental deploys the per-version migrations live at
--- supabase/v0.8.0_migration.sql, supabase/v0.8.2_migration.sql,
--- supabase/v0.8.3_migration.sql, supabase/v0.8.4_migration.sql, and
--- supabase/v0.8.4.1_migration.sql.
+-- project. For incremental deploys the per-version migrations live in
+-- supabase/v0.X.Y_migration.sql. v0.22.0 (M3 multi-tenancy) is the
+-- most recent — it added studio_id to every tenant-scoped table and
+-- added the current_studio_id() helper, then rewrote every slug-based
+-- RPC to filter by it. See docs/adr/0001-multi-tenancy.md and
+-- docs/specs/M3_multi_tenancy.md for the rationale.
 -- Every function is CREATE OR REPLACE and the credit_transactions
 -- table / v_members_with_access view are idempotent so re-runs are safe.
 --
@@ -44,6 +46,17 @@
 --     qa-* classes back to their intended state relative to now().
 --     Production data is untouched; this lives purely to give live QA a
 --     stable too-early / open / already-in / closed / correction matrix.
+--
+-- v0.22.0 (M3) added multi-tenancy:
+--   - current_studio_id() helper — derives caller's studio_id from
+--     staff (preferred) or members. Anonymous → NULL.
+--   - Every slug-based RPC gains p_studio_id uuid default null and
+--     filters by `(slug, studio_id)`. Id-based RPCs resolve studio_id
+--     from the row referenced by the id parameter. Internal helpers
+--     resolve studio_id at the insert site from the parent row.
+--   - credit_transactions / booking_events / class_bookings /
+--     purchases / plans / classes / staff / members all carry
+--     studio_id uuid not null references studios(id).
 
 -- ═══ WAITLIST PERFORMANCE INDEX ═════════════════════════════════════════
 CREATE INDEX IF NOT EXISTS idx_waitlist_position
@@ -77,9 +90,13 @@ RETURNS void LANGUAGE sql AS $$
 $$;
 
 -- ═══ CREDIT_TRANSACTIONS — append-only financial truth ═════════════════
+-- v0.22.0: studio_id added (M3 multi-tenancy). New rows must carry it;
+-- the scopedQuery proxy injects it on the application side, and every
+-- PL/pgSQL function in this file resolves it from the parent row.
 CREATE TABLE IF NOT EXISTS credit_transactions (
   id             uuid primary key default gen_random_uuid(),
   member_id      uuid not null references members(id) on delete cascade,
+  studio_id      uuid not null references studios(id),
   delta          integer not null,
   balance_after  integer not null,
   reason_code    text not null,
@@ -96,6 +113,22 @@ CREATE INDEX IF NOT EXISTS idx_credit_tx_member
 
 -- Ensure permissive access (project has no auth layer; RLS disabled elsewhere)
 ALTER TABLE credit_transactions DISABLE ROW LEVEL SECURITY;
+
+-- ═══ current_studio_id() — v0.22.0 (M3 multi-tenancy) ══════════════════
+-- ADR Decision 2. STABLE for per-transaction caching. SECURITY DEFINER
+-- so it can read staff/members regardless of caller RLS (safe today —
+-- RLS is off on data tables, on-with-self-read on staff). search_path
+-- locked to public.
+--
+-- Resolution: staff_studio_id first (operator session implies operator
+-- view), then members_studio_id, then NULL (anonymous).
+CREATE OR REPLACE FUNCTION current_studio_id() RETURNS uuid
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT COALESCE(
+    (SELECT studio_id FROM staff   WHERE user_id = auth.uid() LIMIT 1),
+    (SELECT studio_id FROM members WHERE user_id = auth.uid() LIMIT 1)
+  );
+$$;
 
 -- ═══ sf_check_eligibility — v0.9.4.1 Booking Truth Simplification ═════
 -- Booking truth for this phase is entitlement only:
@@ -208,11 +241,10 @@ SELECT
   sf_check_eligibility(m.id) AS access
 FROM members m;
 
--- ═══ sf_consume_credit — v0.8.0 update ═════════════════════════════════
--- Now accepts full ledger context and writes a row on every consumption.
--- Unlimited plans remain a no-op (no balance change, no ledger row).
--- Returns the new balance and ledger row id, or {consumed:false} if it
--- was a no-op so callers can audit.
+-- ═══ sf_consume_credit — v0.8.0 update, v0.22.0 studio_id awareness ═══
+-- v0.22.0 (M3): signature unchanged. Resolves studio_id from the member
+-- row at the insert site so credit_transactions carries it. Internal
+-- helper — callers pass member_id, which already encodes studio identity.
 CREATE OR REPLACE FUNCTION sf_consume_credit(
   p_member_id    uuid,
   p_reason_code  text,
@@ -224,10 +256,13 @@ CREATE OR REPLACE FUNCTION sf_consume_credit(
 ) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
   v_plan text;
+  v_studio uuid;
   v_bal_after integer;
   v_ledger_id uuid;
 BEGIN
-  SELECT plan_type INTO v_plan FROM members WHERE id = p_member_id FOR UPDATE;
+  SELECT plan_type, studio_id INTO v_plan, v_studio
+  FROM members WHERE id = p_member_id FOR UPDATE;
+
   IF v_plan IN ('class_pack','trial') THEN
     UPDATE members
     SET credits_remaining = GREATEST(COALESCE(credits_remaining, 0) - 1, 0),
@@ -236,11 +271,11 @@ BEGIN
     RETURNING credits_remaining INTO v_bal_after;
 
     INSERT INTO credit_transactions (
-      member_id, delta, balance_after, reason_code, source,
+      member_id, studio_id, delta, balance_after, reason_code, source,
       class_id, booking_id, note, operator_key
     )
     VALUES (
-      p_member_id, -1, v_bal_after, p_reason_code, p_source,
+      p_member_id, v_studio, -1, v_bal_after, p_reason_code, p_source,
       p_class_id, p_booking_id, p_note, p_operator_key
     )
     RETURNING id INTO v_ledger_id;
@@ -255,7 +290,8 @@ BEGIN
 END;
 $$;
 
--- ═══ sf_refund_credit — v0.8.0 update ══════════════════════════════════
+-- ═══ sf_refund_credit — v0.8.0 update, v0.22.0 studio_id awareness ═══
+-- v0.22.0 (M3): signature unchanged. Mirrors sf_consume_credit.
 CREATE OR REPLACE FUNCTION sf_refund_credit(
   p_member_id    uuid,
   p_reason_code  text,
@@ -267,10 +303,13 @@ CREATE OR REPLACE FUNCTION sf_refund_credit(
 ) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
   v_plan text;
+  v_studio uuid;
   v_bal_after integer;
   v_ledger_id uuid;
 BEGIN
-  SELECT plan_type INTO v_plan FROM members WHERE id = p_member_id FOR UPDATE;
+  SELECT plan_type, studio_id INTO v_plan, v_studio
+  FROM members WHERE id = p_member_id FOR UPDATE;
+
   IF v_plan IN ('class_pack','trial') THEN
     UPDATE members
     SET credits_remaining = COALESCE(credits_remaining, 0) + 1,
@@ -279,11 +318,11 @@ BEGIN
     RETURNING credits_remaining INTO v_bal_after;
 
     INSERT INTO credit_transactions (
-      member_id, delta, balance_after, reason_code, source,
+      member_id, studio_id, delta, balance_after, reason_code, source,
       class_id, booking_id, note, operator_key
     )
     VALUES (
-      p_member_id, 1, v_bal_after, p_reason_code, p_source,
+      p_member_id, v_studio, 1, v_bal_after, p_reason_code, p_source,
       p_class_id, p_booking_id, p_note, p_operator_key
     )
     RETURNING id INTO v_ledger_id;
@@ -298,19 +337,20 @@ BEGIN
 END;
 $$;
 
--- ═══ sf_adjust_credit — new operator-driven manual adjustment ══════════
--- Atomic: locks the member row, applies the delta (clamped at 0), and
--- writes a single ledger row with source='operator'. Reason code is
--- required and must be one of the allowed operator reasons. Unlimited
--- and drop_in members cannot be adjusted (rejected with an error).
+-- ═══ sf_adjust_credit — v0.8.0, v0.22.0 studio_id awareness ══════════
+-- v0.22.0 (M3): adds p_studio_id (defaults to current_studio_id()).
+-- Member lookup filters by (slug, studio_id). credit_transactions
+-- insert carries studio_id.
 CREATE OR REPLACE FUNCTION sf_adjust_credit(
   p_member_slug  text,
   p_delta        integer,
   p_reason_code  text,
   p_note         text DEFAULT NULL,
-  p_operator_key text DEFAULT NULL
+  p_operator_key text DEFAULT NULL,
+  p_studio_id    uuid DEFAULT NULL
 ) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
+  v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_member RECORD;
   v_bal_after integer;
   v_ledger_id uuid;
@@ -319,6 +359,9 @@ DECLARE
     'goodwill', 'admin_correction', 'service_recovery'
   ];
 BEGIN
+  IF v_studio_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'no_studio_context');
+  END IF;
   IF p_delta = 0 THEN
     RETURN jsonb_build_object('error', 'Delta must be non-zero');
   END IF;
@@ -330,7 +373,7 @@ BEGIN
   END IF;
 
   SELECT id, plan_type, credits_remaining INTO v_member
-  FROM members WHERE slug = p_member_slug FOR UPDATE;
+  FROM members WHERE slug = p_member_slug AND studio_id = v_studio_id FOR UPDATE;
 
   IF v_member IS NULL THEN
     RETURN jsonb_build_object('error', 'Member not found: ' || p_member_slug);
@@ -351,11 +394,11 @@ BEGIN
   WHERE id = v_member.id;
 
   INSERT INTO credit_transactions (
-    member_id, delta, balance_after, reason_code, source,
+    member_id, studio_id, delta, balance_after, reason_code, source,
     note, operator_key
   )
   VALUES (
-    v_member.id, p_delta, v_bal_after, p_reason_code, 'operator',
+    v_member.id, v_studio_id, p_delta, v_bal_after, p_reason_code, 'operator',
     p_note, p_operator_key
   )
   RETURNING id INTO v_ledger_id;
@@ -370,17 +413,22 @@ BEGIN
 END;
 $$;
 
--- ═══ sf_auto_promote — v0.8.0 update ═══════════════════════════════════
--- Passes ledger context through to sf_consume_credit on promotion.
+-- ═══ sf_auto_promote — v0.8.0, v0.22.0 studio_id awareness ═══════════
+-- v0.22.0 (M3): signature unchanged. Internal helper called from
+-- sf_cancel_booking / sf_promote_member / sf_unpromote_member. Resolves
+-- studio_id from the class row for the booking_events insert.
 CREATE OR REPLACE FUNCTION sf_auto_promote(p_class_id uuid, p_capacity integer)
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE
+  v_studio uuid;
   v_booked integer;
   v_next RECORD;
   v_promoted integer := 0;
   v_elig jsonb;
   v_skipped_ids uuid[] := ARRAY[]::uuid[];
 BEGIN
+  SELECT studio_id INTO v_studio FROM classes WHERE id = p_class_id;
+
   LOOP
     v_booked := sf_count_booked(p_class_id);
     EXIT WHEN v_booked >= p_capacity;
@@ -415,9 +463,12 @@ BEGIN
       v_next.member_id, 'auto_promotion', 'system', p_class_id, v_next.id
     );
 
-    INSERT INTO booking_events (class_id, member_id, booking_id, event_type, event_label, metadata)
+    INSERT INTO booking_events (
+      class_id, member_id, booking_id, studio_id,
+      event_type, event_label, metadata
+    )
     VALUES (
-      p_class_id, v_next.member_id, v_next.id,
+      p_class_id, v_next.member_id, v_next.id, v_studio,
       'promoted_auto',
       'Auto-promoted from waitlist #' || v_next.waitlist_position,
       jsonb_build_object('original_position', v_next.waitlist_position)
@@ -430,13 +481,17 @@ BEGIN
 END;
 $$;
 
--- ═══ sf_book_member — v0.8.0 update ════════════════════════════════════
--- Passes ledger context on direct booking.
+-- ═══ sf_book_member — v0.8.0, v0.22.0 studio_id awareness ═══════════
+-- v0.22.0 (M3): adds p_studio_id. Both class and member lookups filter
+-- by (slug, studio_id). class_bookings + booking_events inserts carry
+-- studio_id.
 CREATE OR REPLACE FUNCTION sf_book_member(
   p_class_slug  text,
-  p_member_slug text
+  p_member_slug text,
+  p_studio_id   uuid DEFAULT NULL
 ) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
+  v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class RECORD;
   v_member RECORD;
   v_existing RECORD;
@@ -446,7 +501,12 @@ DECLARE
   v_status text;
   v_elig jsonb;
 BEGIN
-  SELECT id INTO v_member FROM members WHERE slug = p_member_slug;
+  IF v_studio_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'no_studio_context');
+  END IF;
+
+  SELECT id INTO v_member FROM members
+  WHERE slug = p_member_slug AND studio_id = v_studio_id;
   IF v_member IS NULL THEN
     RETURN jsonb_build_object('error', 'Member not found: ' || p_member_slug);
   END IF;
@@ -463,10 +523,8 @@ BEGIN
     );
   END IF;
 
-  SELECT id, capacity, starts_at, ends_at
-  INTO v_class
-  FROM classes WHERE slug = p_class_slug FOR UPDATE;
-
+  SELECT id, capacity, starts_at, ends_at INTO v_class
+  FROM classes WHERE slug = p_class_slug AND studio_id = v_studio_id FOR UPDATE;
   IF v_class IS NULL THEN
     RETURN jsonb_build_object('error', 'Class not found: ' || p_class_slug);
   END IF;
@@ -494,11 +552,12 @@ BEGIN
 
   IF v_booked < v_class.capacity THEN
     v_status := 'booked';
-    INSERT INTO class_bookings (class_id, member_id, booking_status, booked_at, is_active)
-    VALUES (v_class.id, v_member.id, 'booked', now(), true)
+    INSERT INTO class_bookings (
+      class_id, member_id, studio_id, booking_status, booked_at, is_active
+    )
+    VALUES (v_class.id, v_member.id, v_studio_id, 'booked', now(), true)
     RETURNING id INTO v_booking_id;
 
-    -- v0.8.0: ledger-aware consume
     PERFORM sf_consume_credit(
       v_member.id, 'booking', 'system', v_class.id, v_booking_id
     );
@@ -508,13 +567,18 @@ BEGIN
     FROM class_bookings
     WHERE class_id = v_class.id AND booking_status = 'waitlisted' AND is_active = true;
 
-    INSERT INTO class_bookings (class_id, member_id, booking_status, waitlist_position, is_active)
-    VALUES (v_class.id, v_member.id, 'waitlisted', v_next_pos, true)
+    INSERT INTO class_bookings (
+      class_id, member_id, studio_id, booking_status, waitlist_position, is_active
+    )
+    VALUES (v_class.id, v_member.id, v_studio_id, 'waitlisted', v_next_pos, true)
     RETURNING id INTO v_booking_id;
   END IF;
 
-  INSERT INTO booking_events (class_id, member_id, booking_id, event_type, event_label)
-  VALUES (v_class.id, v_member.id, v_booking_id, v_status,
+  INSERT INTO booking_events (
+    class_id, member_id, booking_id, studio_id, event_type, event_label
+  )
+  VALUES (
+    v_class.id, v_member.id, v_booking_id, v_studio_id, v_status,
     CASE v_status
       WHEN 'booked' THEN 'Booked into class'
       WHEN 'waitlisted' THEN 'Added to waitlist #' || v_next_pos
@@ -525,13 +589,15 @@ BEGIN
 END;
 $$;
 
--- ═══ sf_cancel_booking — v0.8.0 update ═════════════════════════════════
--- Passes ledger context on in-window refund.
+-- ═══ sf_cancel_booking — v0.8.0, v0.22.0 studio_id awareness ═════════
+-- v0.22.0 (M3): adds p_studio_id. Lookups + inserts carry studio_id.
 CREATE OR REPLACE FUNCTION sf_cancel_booking(
   p_class_slug  text,
-  p_member_slug text
+  p_member_slug text,
+  p_studio_id   uuid DEFAULT NULL
 ) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
+  v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class RECORD;
   v_member RECORD;
   v_booking RECORD;
@@ -540,15 +606,18 @@ DECLARE
   v_cutoff timestamptz;
   v_refunded boolean := false;
 BEGIN
-  SELECT id INTO v_member FROM members WHERE slug = p_member_slug;
+  IF v_studio_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'no_studio_context');
+  END IF;
+
+  SELECT id INTO v_member FROM members
+  WHERE slug = p_member_slug AND studio_id = v_studio_id;
   IF v_member IS NULL THEN
     RETURN jsonb_build_object('error', 'Member not found');
   END IF;
 
-  SELECT id, capacity, starts_at, ends_at, cancellation_window_hours
-  INTO v_class
-  FROM classes WHERE slug = p_class_slug FOR UPDATE;
-
+  SELECT id, capacity, starts_at, ends_at, cancellation_window_hours INTO v_class
+  FROM classes WHERE slug = p_class_slug AND studio_id = v_studio_id FOR UPDATE;
   IF v_class IS NULL THEN
     RETURN jsonb_build_object('error', 'Class not found');
   END IF;
@@ -560,11 +629,9 @@ BEGIN
     RETURN jsonb_build_object('error', 'Class is currently live');
   END IF;
 
-  SELECT id, booking_status, waitlist_position, promotion_source
-  INTO v_booking
+  SELECT id, booking_status, waitlist_position, promotion_source INTO v_booking
   FROM class_bookings
   WHERE class_id = v_class.id AND member_id = v_member.id AND is_active = true;
-
   IF v_booking IS NULL THEN
     RETURN jsonb_build_object('error', 'No active booking found');
   END IF;
@@ -578,12 +645,15 @@ BEGIN
       updated_at = now()
     WHERE id = v_booking.id;
 
-    INSERT INTO booking_events (class_id, member_id, booking_id, event_type, event_label)
-    VALUES (v_class.id, v_member.id, v_booking.id, 'cancelled',
-      'Removed from waitlist #' || v_booking.waitlist_position);
+    INSERT INTO booking_events (
+      class_id, member_id, booking_id, studio_id, event_type, event_label
+    )
+    VALUES (
+      v_class.id, v_member.id, v_booking.id, v_studio_id, 'cancelled',
+      'Removed from waitlist #' || v_booking.waitlist_position
+    );
 
     PERFORM sf_resequence_waitlist(v_class.id);
-
   ELSE
     v_cutoff := v_class.starts_at - (v_class.cancellation_window_hours || ' hours')::interval;
 
@@ -601,20 +671,23 @@ BEGIN
     WHERE id = v_booking.id;
 
     IF v_result = 'cancelled' THEN
-      -- v0.8.0: ledger-aware refund
       PERFORM sf_refund_credit(
         v_member.id, 'cancel_refund', 'system', v_class.id, v_booking.id
       );
       v_refunded := true;
     END IF;
 
-    INSERT INTO booking_events (class_id, member_id, booking_id, event_type, event_label, metadata)
-    VALUES (v_class.id, v_member.id, v_booking.id, v_result,
+    INSERT INTO booking_events (
+      class_id, member_id, booking_id, studio_id, event_type, event_label, metadata
+    )
+    VALUES (
+      v_class.id, v_member.id, v_booking.id, v_studio_id, v_result,
       CASE v_result
         WHEN 'cancelled' THEN 'Booking cancelled'
         WHEN 'late_cancel' THEN 'Late cancellation (after cutoff)'
       END,
-      jsonb_build_object('refunded', v_refunded));
+      jsonb_build_object('refunded', v_refunded)
+    );
 
     v_promoted := sf_auto_promote(v_class.id, v_class.capacity);
 
@@ -629,26 +702,32 @@ BEGIN
 END;
 $$;
 
--- ═══ sf_promote_member — v0.8.0 update ═════════════════════════════════
+-- ═══ sf_promote_member — v0.8.0, v0.22.0 studio_id awareness ═════════
 CREATE OR REPLACE FUNCTION sf_promote_member(
   p_class_slug  text,
-  p_member_slug text
+  p_member_slug text,
+  p_studio_id   uuid DEFAULT NULL
 ) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
+  v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class RECORD;
   v_member RECORD;
   v_booking RECORD;
   v_promoted integer := 0;
   v_elig jsonb;
 BEGIN
-  SELECT id INTO v_member FROM members WHERE slug = p_member_slug;
+  IF v_studio_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'no_studio_context');
+  END IF;
+
+  SELECT id INTO v_member FROM members
+  WHERE slug = p_member_slug AND studio_id = v_studio_id;
   IF v_member IS NULL THEN
     RETURN jsonb_build_object('error', 'Member not found');
   END IF;
 
-  SELECT id, capacity, starts_at, ends_at
-  INTO v_class FROM classes WHERE slug = p_class_slug FOR UPDATE;
-
+  SELECT id, capacity, starts_at, ends_at INTO v_class
+  FROM classes WHERE slug = p_class_slug AND studio_id = v_studio_id FOR UPDATE;
   IF v_class IS NULL THEN
     RETURN jsonb_build_object('error', 'Class not found');
   END IF;
@@ -657,7 +736,6 @@ BEGIN
   FROM class_bookings
   WHERE class_id = v_class.id AND member_id = v_member.id
     AND booking_status = 'waitlisted' AND is_active = true;
-
   IF v_booking IS NULL THEN
     RETURN jsonb_build_object('error', 'No waitlisted booking found');
   END IF;
@@ -675,15 +753,18 @@ BEGIN
     updated_at = now()
   WHERE id = v_booking.id;
 
-  -- v0.8.0: ledger-aware consume
   PERFORM sf_consume_credit(
     v_member.id, 'manual_promotion', 'system', v_class.id, v_booking.id
   );
 
-  INSERT INTO booking_events (class_id, member_id, booking_id, event_type, event_label, metadata)
-  VALUES (v_class.id, v_member.id, v_booking.id, 'promoted_manual',
+  INSERT INTO booking_events (
+    class_id, member_id, booking_id, studio_id, event_type, event_label, metadata
+  )
+  VALUES (
+    v_class.id, v_member.id, v_booking.id, v_studio_id, 'promoted_manual',
     'Promoted from waitlist #' || v_booking.waitlist_position,
-    jsonb_build_object('original_position', v_booking.waitlist_position));
+    jsonb_build_object('original_position', v_booking.waitlist_position)
+  );
 
   v_promoted := sf_auto_promote(v_class.id, v_class.capacity);
 
@@ -693,13 +774,15 @@ BEGIN
 END;
 $$;
 
--- ═══ sf_unpromote_member — v0.8.0 update ═══════════════════════════════
+-- ═══ sf_unpromote_member — v0.8.0, v0.22.0 studio_id awareness ════════
 CREATE OR REPLACE FUNCTION sf_unpromote_member(
-  p_class_slug       text,
-  p_member_slug      text,
-  p_original_position integer
+  p_class_slug        text,
+  p_member_slug       text,
+  p_original_position integer,
+  p_studio_id         uuid DEFAULT NULL
 ) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
+  v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class RECORD;
   v_member RECORD;
   v_booking RECORD;
@@ -709,14 +792,18 @@ DECLARE
   v_auto_count integer;
   v_orig_pos integer;
 BEGIN
-  SELECT id INTO v_member FROM members WHERE slug = p_member_slug;
+  IF v_studio_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'no_studio_context');
+  END IF;
+
+  SELECT id INTO v_member FROM members
+  WHERE slug = p_member_slug AND studio_id = v_studio_id;
   IF v_member IS NULL THEN
     RETURN jsonb_build_object('error', 'Member not found');
   END IF;
 
-  SELECT id, capacity FROM classes WHERE slug = p_class_slug
-  INTO v_class FOR UPDATE;
-
+  SELECT id, capacity INTO v_class FROM classes
+  WHERE slug = p_class_slug AND studio_id = v_studio_id FOR UPDATE;
   IF v_class IS NULL THEN
     RETURN jsonb_build_object('error', 'Class not found');
   END IF;
@@ -725,7 +812,6 @@ BEGIN
   FROM class_bookings
   WHERE class_id = v_class.id AND member_id = v_member.id
     AND booking_status = 'booked' AND promotion_source = 'manual' AND is_active = true;
-
   IF v_booking IS NULL THEN
     RETURN jsonb_build_object('error', 'No manually-promoted booking found');
   END IF;
@@ -738,15 +824,18 @@ BEGIN
     updated_at = now()
   WHERE id = v_booking.id;
 
-  -- v0.8.0: ledger-aware refund for the unpromoted member
   PERFORM sf_refund_credit(
     v_member.id, 'unpromote_refund', 'system', v_class.id, v_booking.id
   );
 
-  INSERT INTO booking_events (class_id, member_id, booking_id, event_type, event_label, metadata)
-  VALUES (v_class.id, v_member.id, v_booking.id, 'unpromoted',
+  INSERT INTO booking_events (
+    class_id, member_id, booking_id, studio_id, event_type, event_label, metadata
+  )
+  VALUES (
+    v_class.id, v_member.id, v_booking.id, v_studio_id, 'unpromoted',
     'Promotion reverted (back to waitlist #' || p_original_position || ')',
-    jsonb_build_object('original_position', p_original_position));
+    jsonb_build_object('original_position', p_original_position)
+  );
 
   SELECT count(*)::integer INTO v_base_booked
   FROM class_bookings
@@ -821,31 +910,33 @@ $$;
 CREATE OR REPLACE FUNCTION sf_check_in(
   p_class_slug  text,
   p_member_slug text,
-  p_source      text
+  p_source      text,
+  p_studio_id   uuid DEFAULT NULL
 ) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
+  v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class    RECORD;
   v_member   RECORD;
   v_booking  RECORD;
   v_opens_at timestamptz;
 BEGIN
+  IF v_studio_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'no_studio_context');
+  END IF;
   IF p_source IS NULL OR p_source NOT IN ('client', 'operator') THEN
     RETURN jsonb_build_object(
       'error', 'Invalid source — must be one of: client, operator'
     );
   END IF;
 
-  SELECT id INTO v_member FROM members WHERE slug = p_member_slug;
+  SELECT id INTO v_member FROM members
+  WHERE slug = p_member_slug AND studio_id = v_studio_id;
   IF v_member IS NULL THEN
     RETURN jsonb_build_object('error', 'Member not found: ' || p_member_slug);
   END IF;
 
-  SELECT id, starts_at, ends_at, check_in_window_minutes
-  INTO v_class
-  FROM classes
-  WHERE slug = p_class_slug
-  FOR UPDATE;
-
+  SELECT id, starts_at, ends_at, check_in_window_minutes INTO v_class
+  FROM classes WHERE slug = p_class_slug AND studio_id = v_studio_id FOR UPDATE;
   IF v_class IS NULL THEN
     RETURN jsonb_build_object('error', 'Class not found: ' || p_class_slug);
   END IF;
@@ -899,10 +990,11 @@ BEGIN
   WHERE id = v_booking.id;
 
   INSERT INTO booking_events (
-    class_id, member_id, booking_id, event_type, event_label, metadata
+    class_id, member_id, booking_id, studio_id,
+    event_type, event_label, metadata
   )
   VALUES (
-    v_class.id, v_member.id, v_booking.id,
+    v_class.id, v_member.id, v_booking.id, v_studio_id,
     'checked_in',
     'Checked in (' || p_source || ')',
     jsonb_build_object('source', p_source)
@@ -919,16 +1011,22 @@ $$;
 --
 -- Returns { ok: true, swept: N } — N = number of rows transitioned.
 -- noop when the class is not yet completed or there is nothing to sweep.
-CREATE OR REPLACE FUNCTION sf_finalise_class(p_class_slug text)
-RETURNS jsonb LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION sf_finalise_class(
+  p_class_slug text,
+  p_studio_id  uuid DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
+  v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class RECORD;
   v_count integer := 0;
   r RECORD;
 BEGIN
-  SELECT id, starts_at, ends_at INTO v_class
-  FROM classes WHERE slug = p_class_slug FOR UPDATE;
+  IF v_studio_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'no_studio_context');
+  END IF;
 
+  SELECT id, starts_at, ends_at INTO v_class
+  FROM classes WHERE slug = p_class_slug AND studio_id = v_studio_id FOR UPDATE;
   IF v_class IS NULL THEN
     RETURN jsonb_build_object('error', 'Class not found');
   END IF;
@@ -951,10 +1049,11 @@ BEGIN
     WHERE id = r.id;
 
     INSERT INTO booking_events (
-      class_id, member_id, booking_id, event_type, event_label, metadata
+      class_id, member_id, booking_id, studio_id,
+      event_type, event_label, metadata
     )
     VALUES (
-      v_class.id, r.member_id, r.id,
+      v_class.id, r.member_id, r.id, v_studio_id,
       'auto_no_show',
       'Auto marked no-show at class close',
       jsonb_build_object('source', 'auto_close')
@@ -988,15 +1087,20 @@ $$;
 CREATE OR REPLACE FUNCTION sf_mark_attendance(
   p_class_slug  text,
   p_member_slug text,
-  p_outcome     text
+  p_outcome     text,
+  p_studio_id   uuid DEFAULT NULL
 ) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
+  v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class    RECORD;
   v_member   RECORD;
   v_booking  RECORD;
   v_is_live  boolean;
   v_is_done  boolean;
 BEGIN
+  IF v_studio_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'no_studio_context');
+  END IF;
   IF p_outcome NOT IN ('checked_in', 'no_show', 'booked') THEN
     RETURN jsonb_build_object(
       'error',
@@ -1004,14 +1108,14 @@ BEGIN
     );
   END IF;
 
-  SELECT id INTO v_member FROM members WHERE slug = p_member_slug;
+  SELECT id INTO v_member FROM members
+  WHERE slug = p_member_slug AND studio_id = v_studio_id;
   IF v_member IS NULL THEN
     RETURN jsonb_build_object('error', 'Member not found: ' || p_member_slug);
   END IF;
 
   SELECT id, starts_at, ends_at INTO v_class
-  FROM classes WHERE slug = p_class_slug FOR UPDATE;
-
+  FROM classes WHERE slug = p_class_slug AND studio_id = v_studio_id FOR UPDATE;
   IF v_class IS NULL THEN
     RETURN jsonb_build_object('error', 'Class not found: ' || p_class_slug);
   END IF;
@@ -1063,10 +1167,11 @@ BEGIN
   WHERE id = v_booking.id;
 
   INSERT INTO booking_events (
-    class_id, member_id, booking_id, event_type, event_label, metadata
+    class_id, member_id, booking_id, studio_id,
+    event_type, event_label, metadata
   )
   VALUES (
-    v_class.id, v_member.id, v_booking.id,
+    v_class.id, v_member.id, v_booking.id, v_studio_id,
     CASE
       WHEN v_is_done AND p_outcome = 'checked_in' THEN 'correction_checked_in'
       WHEN v_is_done AND p_outcome = 'no_show'    THEN 'correction_no_show'
@@ -1115,6 +1220,9 @@ CREATE OR REPLACE FUNCTION sf_refresh_qa_fixtures()
 RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
   v_now      timestamptz := now();
+  -- v0.22.0: QA fixtures live in the demo studio. Resolved at function
+  -- entry so insert sites stamp it explicitly.
+  v_studio   uuid := (SELECT id FROM studios WHERE slug = 'demo');
   v_qa_class uuid[] := ARRAY[
     'd0000000-0000-0000-0000-000000000001'::uuid,
     'd0000000-0000-0000-0000-000000000002'::uuid,
@@ -1126,6 +1234,9 @@ DECLARE
   v_blake uuid := 'c0000000-0000-0000-0000-000000000002';
   v_casey uuid := 'c0000000-0000-0000-0000-000000000003';
 BEGIN
+  IF v_studio IS NULL THEN
+    RAISE EXCEPTION 'sf_refresh_qa_fixtures: demo studio not found';
+  END IF;
   UPDATE classes SET
     starts_at = v_now + interval '60 minutes',
     ends_at   = v_now + interval '120 minutes',
@@ -1164,26 +1275,26 @@ BEGIN
   DELETE FROM booking_events WHERE class_id = ANY(v_qa_class);
   DELETE FROM class_bookings WHERE class_id = ANY(v_qa_class);
 
-  INSERT INTO class_bookings (class_id, member_id, booking_status, is_active) VALUES
-    ('d0000000-0000-0000-0000-000000000001', v_alex,  'booked', true),
-    ('d0000000-0000-0000-0000-000000000001', v_blake, 'booked', true);
+  INSERT INTO class_bookings (class_id, member_id, studio_id, booking_status, is_active) VALUES
+    ('d0000000-0000-0000-0000-000000000001', v_alex,  v_studio, 'booked', true),
+    ('d0000000-0000-0000-0000-000000000001', v_blake, v_studio, 'booked', true);
 
-  INSERT INTO class_bookings (class_id, member_id, booking_status, is_active) VALUES
-    ('d0000000-0000-0000-0000-000000000002', v_alex,  'booked', true),
-    ('d0000000-0000-0000-0000-000000000002', v_blake, 'booked', true),
-    ('d0000000-0000-0000-0000-000000000002', v_casey, 'booked', true);
+  INSERT INTO class_bookings (class_id, member_id, studio_id, booking_status, is_active) VALUES
+    ('d0000000-0000-0000-0000-000000000002', v_alex,  v_studio, 'booked', true),
+    ('d0000000-0000-0000-0000-000000000002', v_blake, v_studio, 'booked', true),
+    ('d0000000-0000-0000-0000-000000000002', v_casey, v_studio, 'booked', true);
 
   INSERT INTO class_bookings (
-    class_id, member_id, booking_status, checked_in_at, is_active
+    class_id, member_id, studio_id, booking_status, checked_in_at, is_active
   ) VALUES
-    ('d0000000-0000-0000-0000-000000000003', v_alex,  'checked_in', v_now, true),
-    ('d0000000-0000-0000-0000-000000000003', v_blake, 'booked', NULL, true);
+    ('d0000000-0000-0000-0000-000000000003', v_alex,  v_studio, 'checked_in', v_now, true),
+    ('d0000000-0000-0000-0000-000000000003', v_blake, v_studio, 'booked', NULL, true);
 
   INSERT INTO booking_events (
-    class_id, member_id, booking_id, event_type, event_label, metadata
+    class_id, member_id, booking_id, studio_id, event_type, event_label, metadata
   )
   SELECT
-    cb.class_id, cb.member_id, cb.id,
+    cb.class_id, cb.member_id, cb.id, v_studio,
     'checked_in',
     'Checked in (qa_fixture)',
     jsonb_build_object('source', 'qa_fixture')
@@ -1192,22 +1303,22 @@ BEGIN
     AND cb.booking_status = 'checked_in';
 
   INSERT INTO class_bookings (
-    class_id, member_id, booking_status, checked_in_at, is_active
+    class_id, member_id, studio_id, booking_status, checked_in_at, is_active
   ) VALUES
     ('d0000000-0000-0000-0000-000000000004', v_alex,
-     'checked_in', v_now - interval '75 minutes', true),
+     v_studio, 'checked_in', v_now - interval '75 minutes', true),
     ('d0000000-0000-0000-0000-000000000004', v_blake,
-     'no_show', NULL, true);
+     v_studio, 'no_show', NULL, true);
 
   INSERT INTO class_bookings (
-    class_id, member_id, booking_status, checked_in_at, is_active
+    class_id, member_id, studio_id, booking_status, checked_in_at, is_active
   ) VALUES
     ('d0000000-0000-0000-0000-000000000005', v_alex,
-     'checked_in', v_now - interval '165 minutes', true),
+     v_studio, 'checked_in', v_now - interval '165 minutes', true),
     ('d0000000-0000-0000-0000-000000000005', v_blake,
-     'no_show', NULL, true),
+     v_studio, 'no_show', NULL, true),
     ('d0000000-0000-0000-0000-000000000005', v_casey,
-     'checked_in', v_now - interval '165 minutes', true);
+     v_studio, 'checked_in', v_now - interval '165 minutes', true);
 
   RETURN jsonb_build_object(
     'ok', true,
@@ -1240,18 +1351,29 @@ CREATE OR REPLACE FUNCTION sf_apply_purchase(
 )
 RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE
+  v_studio          uuid;
   v_purchase_id     uuid;
   v_new_credits     integer;
   v_normalised_type text;
 BEGIN
+  -- v0.22.0: studio_id resolved from the member row referenced by
+  -- p_member_id. Signature unchanged so applyPurchase.ts is not touched.
+  SELECT studio_id INTO v_studio FROM members WHERE id = p_member_id;
+  IF v_studio IS NULL THEN
+    RETURN jsonb_build_object(
+      'ok', false,
+      'error', 'sf_apply_purchase: member not found or has no studio_id'
+    );
+  END IF;
+
   v_normalised_type := CASE p_plan_type
     WHEN 'credit_pack' THEN 'class_pack'
     ELSE p_plan_type
   END;
 
   BEGIN
-    INSERT INTO purchases (member_id, plan_id, source, external_id)
-    VALUES (p_member_id, p_plan_id, p_source, p_external_id)
+    INSERT INTO purchases (member_id, studio_id, plan_id, source, external_id)
+    VALUES (p_member_id, v_studio, p_plan_id, p_source, p_external_id)
     RETURNING id INTO v_purchase_id;
   EXCEPTION WHEN unique_violation THEN
     RETURN jsonb_build_object(
@@ -1315,7 +1437,7 @@ DECLARE
   v_new_balance  integer;
   v_ledger_id    uuid;
 BEGIN
-  SELECT id, member_id, plan_id, source, status,
+  SELECT id, member_id, studio_id, plan_id, source, status,
          price_cents_paid, credits_granted, external_id, created_at
     INTO v_purchase
     FROM purchases
@@ -1338,10 +1460,11 @@ BEGIN
     );
   END IF;
 
+  -- v0.22.0: plans is tenant-scoped — match purchase's studio_id.
   SELECT id, type, credits, price_cents
     INTO v_plan
     FROM plans
-    WHERE id = v_purchase.plan_id;
+    WHERE id = v_purchase.plan_id AND studio_id = v_purchase.studio_id;
   IF v_plan IS NULL THEN
     RETURN jsonb_build_object(
       'ok', false,
@@ -1396,9 +1519,10 @@ BEGIN
     RETURNING credits_remaining INTO v_new_balance;
 
   INSERT INTO credit_transactions (
-    member_id, delta, balance_after, reason_code, source, note
+    member_id, studio_id, delta, balance_after, reason_code, source, note
   ) VALUES (
     v_purchase.member_id,
+    v_purchase.studio_id,
     -v_purchase.credits_granted,
     v_new_balance,
     'purchase_refund',
