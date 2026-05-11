@@ -1,4 +1,4 @@
-import { getSupabaseClient } from "@/lib/supabase";
+import { scopedQuery } from "@/lib/db";
 
 /**
  * v0.17.2 shared revenue module.
@@ -277,7 +277,7 @@ export async function fetchRevenue(
   range: RangeKey,
   now: Date = new Date(),
 ): Promise<FetchRevenueResult> {
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return {
       ok: false,

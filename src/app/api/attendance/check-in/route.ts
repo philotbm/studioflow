@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
+import { scopedQuery } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { getSupabaseClient } from "@/lib/supabase";
 
 /**
  * v0.8.4.3 server-side check-in.
@@ -59,7 +59,7 @@ export async function POST(req: Request) {
   }
   const source = sourceRaw as Source;
 
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return bad(
       "no_client",

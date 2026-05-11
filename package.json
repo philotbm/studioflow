@@ -1,6 +1,6 @@
 {
   "name": "studioflow",
-  "version": "0.21.0.4",
+  "version": "0.21.0.5",
   "private": true,
   "scripts": {
     "dev": "next dev",

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseClient } from "@/lib/supabase";
+import { scopedQuery } from "@/lib/db";
 
 /**
  * v0.8.4.2 QA environment status endpoint.
@@ -39,7 +39,7 @@ const QA_CLASS_SLUGS = [
 ] as const;
 
 export async function GET() {
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return NextResponse.json(
       {

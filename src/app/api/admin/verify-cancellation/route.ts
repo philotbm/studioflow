@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseClient } from "@/lib/supabase";
+import { scopedQuery } from "@/lib/db";
 
 /**
  * v0.9.0.1 cancellation QA trace.
@@ -38,7 +38,7 @@ import { getSupabaseClient } from "@/lib/supabase";
  */
 
 async function readCredits(
-  client: ReturnType<typeof getSupabaseClient>,
+  client: Awaited<ReturnType<typeof scopedQuery>>,
   slug: string,
 ): Promise<number | null> {
   if (!client) return null;
@@ -81,7 +81,7 @@ async function handle(req: Request) {
     );
   }
 
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return NextResponse.json(
       { ok: false, error: "Supabase client not configured" },
@@ -95,6 +95,7 @@ async function handle(req: Request) {
     // Book. sf_book_member will either succeed ("booked"/"waitlisted")
     // or block with an access payload. We surface both outcomes verbatim
     // so the trace is honest about what actually happened.
+    // TODO(M3): pass studio_id explicitly once sf_book_member is studio-scoped.
     const bookRes = await client.rpc("sf_book_member", {
       p_class_slug: classSlug,
       p_member_slug: memberSlug,
@@ -127,6 +128,7 @@ async function handle(req: Request) {
     // Cancel — server picks on-time vs late_cancel based on class timing
     // and cancellation_window_hours. We don't force a branch, we
     // observe which one the server chose.
+    // TODO(M3): pass studio_id explicitly once sf_cancel_booking is studio-scoped.
     const cancelRes = await client.rpc("sf_cancel_booking", {
       p_class_slug: classSlug,
       p_member_slug: memberSlug,

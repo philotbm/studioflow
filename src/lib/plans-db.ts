@@ -1,4 +1,4 @@
-import { getSupabaseClient } from "@/lib/supabase";
+import { scopedQuery } from "@/lib/db";
 import { generatePlanId, type Plan, type PlanType } from "@/lib/plans";
 
 /**
@@ -31,8 +31,8 @@ function mapRow(row: PlanRow): Plan {
   };
 }
 
-function requireClient() {
-  const client = getSupabaseClient();
+async function requireClient() {
+  const client = await scopedQuery();
   if (!client) {
     throw new Error("Supabase client not initialised (NEXT_PUBLIC_SUPABASE_* env vars missing)");
   }
@@ -43,7 +43,7 @@ const PLAN_COLUMNS = "id, name, type, price_cents, credits, active, created_at";
 
 /** Read all plans, newest first. Includes inactive rows. */
 export async function listPlans(): Promise<Plan[]> {
-  const { data, error } = await requireClient()
+  const { data, error } = await (await requireClient())
     .from("plans")
     .select(PLAN_COLUMNS)
     .order("created_at", { ascending: false });
@@ -61,7 +61,7 @@ export async function listPlans(): Promise<Plan[]> {
  * still see the plan name on their receipt, not a raw id.
  */
 export async function fetchPlanById(id: string): Promise<Plan | null> {
-  const { data, error } = await requireClient()
+  const { data, error } = await (await requireClient())
     .from("plans")
     .select(PLAN_COLUMNS)
     .eq("id", id)
@@ -96,7 +96,7 @@ export type CreatePlanResult =
  * other on `_2`.
  */
 export async function insertPlan(input: CreatePlanInput): Promise<CreatePlanResult> {
-  const client = requireClient();
+  const client = await requireClient();
   const base = generatePlanId(input.name);
   const MAX_ATTEMPTS = 50;
 
@@ -133,7 +133,7 @@ export async function updatePlanActive(
   id: string,
   active: boolean,
 ): Promise<CreatePlanResult> {
-  const { data, error } = await requireClient()
+  const { data, error } = await (await requireClient())
     .from("plans")
     .update({ active })
     .eq("id", id)
@@ -176,7 +176,7 @@ export async function updatePlanFields(
   id: string,
   input: UpdatePlanFieldsInput,
 ): Promise<CreatePlanResult> {
-  const client = requireClient();
+  const client = await requireClient();
 
   const { data: existing, error: existingErr } = await client
     .from("plans")

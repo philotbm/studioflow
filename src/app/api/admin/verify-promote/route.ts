@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseClient } from "@/lib/supabase";
+import { scopedQuery } from "@/lib/db";
 
 /**
  * v0.9.2 waitlist promotion enforcement trace.
@@ -27,7 +27,7 @@ type PromoteBody = {
 };
 
 async function readCredits(
-  client: ReturnType<typeof getSupabaseClient>,
+  client: Awaited<ReturnType<typeof scopedQuery>>,
   slug: string,
 ): Promise<number | null> {
   if (!client) return null;
@@ -67,7 +67,7 @@ async function handle(req: Request) {
     );
   }
 
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return NextResponse.json(
       { ok: false, error: "Supabase client not configured" },
@@ -77,6 +77,7 @@ async function handle(req: Request) {
 
   try {
     const creditsBefore = await readCredits(client, memberSlug);
+    // TODO(M3): pass studio_id explicitly once sf_promote_member is studio-scoped.
     const promRes = await client.rpc("sf_promote_member", {
       p_class_slug: classSlug,
       p_member_slug: memberSlug,

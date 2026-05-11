@@ -1,4 +1,4 @@
-import { getSupabaseClient } from "@/lib/supabase";
+import { scopedQuery } from "@/lib/db";
 import { fetchPlanById } from "@/lib/plans-db";
 
 /**
@@ -103,7 +103,7 @@ export async function applyPurchase(
     };
   }
 
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return {
       ok: false,
@@ -133,6 +133,7 @@ export async function applyPurchase(
   // + the purchase-health reporting), per the original brief's
   // "if removal is risky, keep but make it visible" guidance.
   let legacyFallbackUsed = false;
+  // TODO(M3): pass studio_id explicitly once sf_apply_purchase is studio-scoped.
   let rpcResult = await client.rpc("sf_apply_purchase", {
     p_member_id: input.memberId,
     p_plan_id: plan.id,
