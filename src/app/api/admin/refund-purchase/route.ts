@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
 import { getSupabaseClient } from "@/lib/supabase";
 
 /**
@@ -62,10 +63,11 @@ export async function POST(req: Request) {
   if (error) {
     // 42883: function does not exist — v0.16.0 migration not applied.
     if (error.code === "42883") {
-      console.error(
-        "[refund-purchase] sf_refund_purchase missing — v0.16.0 migration not applied:",
-        error.message,
-      );
+      logger.error({
+        event: "refund_purchase_rpc_missing",
+        reason: "v0.16.0 migration not applied",
+        message: error.message,
+      });
       return NextResponse.json(
         {
           ok: false,
@@ -77,7 +79,7 @@ export async function POST(req: Request) {
         { status: 500 },
       );
     }
-    console.error("[refund-purchase] RPC failed:", error.message);
+    logger.error({ event: "refund_purchase_rpc_failed", message: error.message });
     return NextResponse.json(
       { ok: false, code: "rpc_error", error: error.message },
       { status: 500 },

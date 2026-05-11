@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
 import { getSupabaseClient } from "@/lib/supabase";
 
 /**
@@ -179,7 +180,10 @@ export async function POST(req: Request) {
     // Don't unwind the state flip — the booking is now checked_in and
     // that is the source of truth. Log and return a partial-audit
     // signal so the caller can surface the issue if needed.
-    console.warn("[attendance/check-in] audit insert failed:", auditErr.message);
+    logger.warn({
+      event: "attendance_checkin_audit_insert_failed",
+      message: auditErr.message,
+    });
   }
 
   return NextResponse.json({
