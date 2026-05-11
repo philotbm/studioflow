@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseClient } from "@/lib/supabase";
+import { scopedQuery } from "@/lib/db";
 
 /**
  * v0.15.1.1 GET-only purchase diagnostics.
@@ -125,7 +125,7 @@ export async function GET() {
   const webhookConfigured = Boolean(process.env.STRIPE_WEBHOOK_SECRET);
   const fakeModeActive = !stripeConfigured;
 
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return NextResponse.json(
       {

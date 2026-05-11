@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "./supabase";
 import type { Plan, PlanType } from "./plans";
 import type {
@@ -24,9 +25,37 @@ import type {
   BookingAccess,
 } from "@/app/app/members/data";
 
-/** Throws if Supabase client is not initialized */
-function requireClient() {
-  const client = getSupabaseClient();
+/**
+ * v0.21.0.5 — Supabase server client for queries against tenant-scoped
+ * tables (members, staff, classes, class_bookings, booking_events,
+ * credit_transactions, plans, purchases, and views derived from them).
+ *
+ * Today (v0.21.0.5): identical to getSupabaseClient() — async
+ * pass-through. Returns `null` if env vars are missing so callers can
+ * surface the same 503/error response they always have.
+ *
+ * After M3 (v0.22.0): proxies the client so .from(<tenant_scoped>)
+ * auto-applies .eq('studio_id', current_studio_id()) and the same
+ * predicate to inserts/updates. Call sites do NOT change between
+ * v0.21.0.5 and v0.22.0 — only this function's body.
+ *
+ * Use getSupabaseClient() directly only for:
+ *   - auth-row reads (auth.users, the staff self-read pattern in
+ *     src/lib/auth.ts / src/proxy.ts)
+ *   - the `studios` table itself (lands in M3)
+ *   - intentional cross-tenant operations (the Stripe webhook
+ *     derives studio_id from event metadata, not request context) —
+ *     these must carry an inline comment naming the reason.
+ *
+ * See docs/adr/0001-multi-tenancy.md Decision 6.
+ */
+export async function scopedQuery(): Promise<SupabaseClient | null> {
+  return getSupabaseClient();
+}
+
+/** Throws if Supabase client is not initialized. Internal — db.ts only. */
+async function requireClient() {
+  const client = await scopedQuery();
   if (!client) {
     throw new Error(
       "Supabase client not initialized. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel env vars, then redeploy.",
@@ -218,7 +247,7 @@ function mapClassWithBookings(
 // ── Read queries (unchanged) ────────────────────────────────────────
 
 async function buildPromotionMeta(): Promise<Map<string, number>> {
-  const { data: events } = await requireClient()
+  const { data: events } = await (await requireClient())
     .from("booking_events")
     .select("booking_id, metadata")
     .in("event_type", ["promoted_manual", "promoted_auto"]);
@@ -240,8 +269,8 @@ async function buildPromotionMeta(): Promise<Map<string, number>> {
 export async function fetchAllClasses(): Promise<StudioClass[]> {
   const [{ data: classes, error: clsErr }, { data: bookings, error: bkErr }, promotionMeta] =
     await Promise.all([
-      requireClient().from("classes").select("*").order("starts_at", { ascending: true }),
-      requireClient().from("class_bookings").select("*, members(slug, full_name)").eq("is_active", true),
+      (await requireClient()).from("classes").select("*").order("starts_at", { ascending: true }),
+      (await requireClient()).from("class_bookings").select("*, members(slug, full_name)").eq("is_active", true),
       buildPromotionMeta(),
     ]);
 
@@ -271,7 +300,7 @@ export async function fetchAllClasses(): Promise<StudioClass[]> {
 }
 
 export async function fetchClassBySlug(slug: string): Promise<StudioClass | null> {
-  const { data: cls, error: clsErr } = await requireClient()
+  const { data: cls, error: clsErr } = await (await requireClient())
     .from("classes")
     .select("*")
     .eq("slug", slug)
@@ -280,7 +309,7 @@ export async function fetchClassBySlug(slug: string): Promise<StudioClass | null
   if (clsErr || !cls) return null;
 
   const [{ data: bookings }, promotionMeta] = await Promise.all([
-    requireClient()
+    (await requireClient())
       .from("class_bookings")
       .select("*, members(slug, full_name)")
       .eq("class_id", cls.id)
@@ -295,7 +324,7 @@ export async function fetchAllMembers(): Promise<Member[]> {
   // v0.8.0: read from the server-derived access view instead of `members`
   // directly. The `access` column is the DB's booking-access truth — the
   // client no longer re-runs any eligibility rules.
-  const { data, error } = await requireClient()
+  const { data, error } = await (await requireClient())
     .from("v_members_with_access")
     .select("*")
     .not("plan_type", "eq", "drop_in")
@@ -312,7 +341,7 @@ export async function fetchAllMembers(): Promise<Member[]> {
 }
 
 export async function fetchMemberBySlug(slug: string): Promise<Member | null> {
-  const { data, error } = await requireClient()
+  const { data, error } = await (await requireClient())
     .from("v_members_with_access")
     .select("*")
     .eq("slug", slug)
@@ -333,7 +362,7 @@ export type AuditEvent = {
 };
 
 export async function fetchBookingEventsForClass(classSlug: string): Promise<AuditEvent[]> {
-  const { data: cls } = await requireClient()
+  const { data: cls } = await (await requireClient())
     .from("classes")
     .select("id")
     .eq("slug", classSlug)
@@ -341,7 +370,7 @@ export async function fetchBookingEventsForClass(classSlug: string): Promise<Aud
 
   if (!cls) return [];
 
-  const { data: events } = await requireClient()
+  const { data: events } = await (await requireClient())
     .from("booking_events")
     .select("*, members(slug, full_name)")
     .eq("class_id", cls.id)
@@ -364,7 +393,8 @@ export async function fetchBookingEventsForClass(classSlug: string): Promise<Aud
 
 /** Helper: call an RPC function and throw on error */
 async function callRpc<T>(name: string, params: Record<string, unknown>): Promise<T> {
-  const { data, error } = await requireClient().rpc(name, params);
+  // TODO(M3): pass studio_id explicitly once these RPCs are studio-scoped.
+  const { data, error } = await (await requireClient()).rpc(name, params);
   if (error) {
     console.error(`[${name}] RPC failed:`, error.message);
     throw new Error(`${name} failed: ${error.message}`);
@@ -403,7 +433,8 @@ export async function bookMemberIntoClass(
   // structured reason. This is NOT an error — it's a normal domain
   // outcome — so we bypass the callRpc helper (which would throw on
   // error-keyed responses) and inspect the raw response ourselves.
-  const { data, error } = await requireClient().rpc("sf_book_member", {
+  // TODO(M3): pass studio_id explicitly once sf_book_member is studio-scoped.
+  const { data, error } = await (await requireClient()).rpc("sf_book_member", {
     p_class_slug: classSlug,
     p_member_slug: memberSlug,
   });
@@ -502,7 +533,8 @@ export async function markAttendance(
   memberSlug: string,
   outcome: AttendanceOutcome,
 ): Promise<MarkAttendanceResult> {
-  const { data, error } = await requireClient().rpc("sf_mark_attendance", {
+  // TODO(M3): pass studio_id explicitly once sf_mark_attendance is studio-scoped.
+  const { data, error } = await (await requireClient()).rpc("sf_mark_attendance", {
     p_class_slug: classSlug,
     p_member_slug: memberSlug,
     p_outcome: outcome,
@@ -646,7 +678,8 @@ export type FinaliseClassResult = {
 export async function finaliseClass(
   classSlug: string,
 ): Promise<FinaliseClassResult> {
-  const { data, error } = await requireClient().rpc("sf_finalise_class", {
+  // TODO(M3): pass studio_id explicitly once sf_finalise_class is studio-scoped.
+  const { data, error } = await (await requireClient()).rpc("sf_finalise_class", {
     p_class_slug: classSlug,
   });
   if (error) {
@@ -670,12 +703,12 @@ export async function checkInAttendee(
 ): Promise<void> {
   // Simple single-row update — no concurrency concern, keep as direct query
   const [{ data: cls }, { data: mem }] = await Promise.all([
-    requireClient().from("classes").select("id").eq("slug", classSlug).single(),
-    requireClient().from("members").select("id").eq("slug", memberSlug).single(),
+    (await requireClient()).from("classes").select("id").eq("slug", classSlug).single(),
+    (await requireClient()).from("members").select("id").eq("slug", memberSlug).single(),
   ]);
   if (!cls || !mem) throw new Error("Class or member not found");
 
-  const { data: booking } = await requireClient()
+  const { data: booking } = await (await requireClient())
     .from("class_bookings")
     .select("id")
     .eq("class_id", cls.id)
@@ -686,7 +719,7 @@ export async function checkInAttendee(
 
   if (!booking) throw new Error("No active booking found for check-in");
 
-  await requireClient()
+  await (await requireClient())
     .from("class_bookings")
     .update({
       checked_in_at: new Date().toISOString(),
@@ -694,7 +727,7 @@ export async function checkInAttendee(
     })
     .eq("id", booking.id);
 
-  await requireClient().from("booking_events").insert({
+  await (await requireClient()).from("booking_events").insert({
     class_id: cls.id,
     member_id: mem.id,
     booking_id: booking.id,
@@ -743,7 +776,8 @@ export async function adjustMemberCredit(
   reasonCode: ManualAdjustReason,
   note: string | null,
 ): Promise<AdjustCreditResult> {
-  const { data, error } = await requireClient().rpc("sf_adjust_credit", {
+  // TODO(M3): pass studio_id explicitly once sf_adjust_credit is studio-scoped.
+  const { data, error } = await (await requireClient()).rpc("sf_adjust_credit", {
     p_member_slug: memberSlug,
     p_delta: delta,
     p_reason_code: reasonCode,
@@ -937,14 +971,14 @@ export async function fetchRecentLedgerEntries(
   memberSlug: string,
   limit = 10,
 ): Promise<LedgerEntry[]> {
-  const { data: mem } = await requireClient()
+  const { data: mem } = await (await requireClient())
     .from("members")
     .select("id")
     .eq("slug", memberSlug)
     .single();
   if (!mem) return [];
 
-  const { data, error } = await requireClient()
+  const { data, error } = await (await requireClient())
     .from("credit_transactions")
     .select("*")
     .eq("member_id", mem.id)
@@ -1016,14 +1050,14 @@ export async function fetchMemberPurchases(
   memberSlug: string,
   limit = 10,
 ): Promise<PurchaseRecord[]> {
-  const { data: mem } = await requireClient()
+  const { data: mem } = await (await requireClient())
     .from("members")
     .select("id")
     .eq("slug", memberSlug)
     .single();
   if (!mem) return [];
 
-  const { data, error } = await requireClient()
+  const { data, error } = await (await requireClient())
     .from("purchases")
     .select(
       "id, plan_id, source, external_id, status, price_cents_paid, credits_granted, created_at",
@@ -1085,14 +1119,14 @@ export async function fetchPurchaseForMember(
 ): Promise<PurchaseRecord | null> {
   if (!PURCHASE_UUID_RE.test(purchaseId)) return null;
 
-  const { data: mem } = await requireClient()
+  const { data: mem } = await (await requireClient())
     .from("members")
     .select("id")
     .eq("slug", memberSlug)
     .single();
   if (!mem) return null;
 
-  const { data, error } = await requireClient()
+  const { data, error } = await (await requireClient())
     .from("purchases")
     .select(
       "id, plan_id, source, external_id, status, price_cents_paid, credits_granted, created_at",
@@ -1149,7 +1183,7 @@ type PlanRowShape = {
  * the operator admin page shows active + inactive together.
  */
 export async function fetchAllPlans(): Promise<Plan[]> {
-  const { data, error } = await requireClient()
+  const { data, error } = await (await requireClient())
     .from("plans")
     .select("id, name, type, price_cents, credits, active, created_at")
     .order("created_at", { ascending: false });

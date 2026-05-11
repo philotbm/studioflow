@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseClient } from "@/lib/supabase";
+import { scopedQuery } from "@/lib/db";
 
 /**
  * v0.8.4.3 attendance repair endpoint.
@@ -22,7 +22,7 @@ import { getSupabaseClient } from "@/lib/supabase";
  */
 
 export async function POST() {
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return NextResponse.json(
       { ok: false, error: "Supabase client is not configured on the server." },

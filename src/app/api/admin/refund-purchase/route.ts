@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
+import { scopedQuery } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { getSupabaseClient } from "@/lib/supabase";
 
 /**
  * v0.16.0 operator refund endpoint.
@@ -49,7 +49,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return NextResponse.json(
       { ok: false, error: "Supabase not configured" },
@@ -57,6 +57,7 @@ export async function POST(req: Request) {
     );
   }
 
+  // TODO(M3): pass studio_id explicitly once sf_refund_purchase is studio-scoped.
   const { data, error } = await client.rpc("sf_refund_purchase", {
     p_purchase_id: purchaseId,
   });

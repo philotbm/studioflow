@@ -84,6 +84,11 @@ export async function POST(req: Request) {
     });
   }
 
+  // Intentional cross-tenant exception (v0.21.0.5 / ADR-0001): the Stripe
+  // webhook is server-to-server with no caller session, so studio_id
+  // must come from event metadata (set when the checkout session was
+  // created), not from current_studio_id(). Keep getSupabaseClient()
+  // here — do NOT switch to scopedQuery() even after M3 lands.
   const client = getSupabaseClient();
   if (!client) {
     // 500 so Stripe retries — Supabase should be configured in prod.

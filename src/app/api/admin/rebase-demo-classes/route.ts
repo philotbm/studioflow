@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseClient } from "@/lib/supabase";
+import { scopedQuery } from "@/lib/db";
 
 /**
  * v0.9.5 Operational Baseline — demo class rebase.
@@ -85,7 +85,7 @@ function atDayOffset(
 }
 
 async function handle() {
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return fail(
       "no_client",

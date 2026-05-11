@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseClient } from "@/lib/supabase";
+import { scopedQuery } from "@/lib/db";
 
 /**
  * v0.9.3 mojibake sanitiser for stored member JSON fields.
@@ -97,7 +97,7 @@ function sanitiseJson(input: unknown): { changed: boolean; value: unknown } {
 }
 
 async function handle(confirm: boolean) {
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return NextResponse.json(
       { ok: false, error: "Supabase client not configured" },

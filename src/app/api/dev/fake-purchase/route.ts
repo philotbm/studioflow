@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
+import { scopedQuery } from "@/lib/db";
 import { applyPurchase, type PurchaseSource } from "@/lib/entitlements/applyPurchase";
-import { getSupabaseClient } from "@/lib/supabase";
 
 /**
  * v0.13.0 / v0.15.0 dev + operator fulfilment fallback for when Stripe
@@ -65,7 +65,7 @@ export async function POST(req: Request) {
   const { memberSlug, planId } = body;
   const source = asAllowedSource(body.source);
 
-  const client = getSupabaseClient();
+  const client = await scopedQuery();
   if (!client) {
     return NextResponse.json(
       { ok: false, error: "Supabase not configured" },
