@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { applyPurchase } from "@/lib/entitlements/applyPurchase";
+import { logger } from "@/lib/logger";
 import { getSupabaseClient } from "@/lib/supabase";
 
 /**
@@ -56,7 +57,7 @@ export async function POST(req: Request) {
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Invalid Stripe signature";
-    console.error("[stripe/webhook] signature verify failed:", message);
+    logger.error({ event: "stripe_webhook_signature_verify_failed", message });
     return NextResponse.json(
       { received: false, error: `Invalid signature: ${message}` },
       { status: 400 },
@@ -116,7 +117,10 @@ export async function POST(req: Request) {
   if (!result.ok) {
     // 500 so Stripe retries — this is a real failure, not a
     // known-skip case.
-    console.error("[stripe/webhook] applyPurchase failed:", result.error);
+    logger.error({
+      event: "stripe_webhook_apply_purchase_failed",
+      error: result.error,
+    });
     return NextResponse.json(
       { received: false, error: result.error },
       { status: 500 },

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { getSupabaseClient } from "@/lib/supabase";
 import { requireMemberAccessForRequest } from "@/lib/auth";
+import { logger } from "@/lib/logger";
 import { fetchPlanById } from "@/lib/plans-db";
 import { planDescription } from "@/lib/plans";
 
@@ -143,7 +144,7 @@ export async function POST(req: Request) {
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Stripe session create failed";
-    console.error("[create-checkout-session] Stripe error:", message);
+    logger.error({ event: "stripe_create_checkout_session_failed", message });
     return NextResponse.json(
       { ok: false, error: message },
       { status: 500 },
