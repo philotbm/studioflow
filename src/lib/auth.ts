@@ -4,6 +4,7 @@ import {
   getSupabaseBrowserAuthClient,
   getSupabaseServerAuthClient,
 } from "./supabase";
+import { AuthRequired, Forbidden } from "./auth-errors";
 
 /**
  * v0.20.0 / v0.20.1 Member auth helpers.
@@ -150,6 +151,42 @@ export async function getCurrentStaffFromCookies(): Promise<StaffRow | null> {
     .eq("user_id", user.id)
     .maybeSingle();
   return (data as StaffRow | null) ?? null;
+}
+
+/**
+ * v0.21.0.3 — in-handler role guard for staff-side server actions.
+ *
+ * Use inside a staff-side server action (or any route handler that
+ * proxy matchers might not cover) to enforce an allowed role list.
+ * Throws AuthRequired if there's no session, Forbidden if there is a
+ * session but the staff row's role isn't in `allowed`. Returns the
+ * staff row on success so callers don't have to re-fetch.
+ *
+ * Why this exists even though src/proxy.ts already enforces roles per
+ * path: Server Functions (server actions) are POSTs to the page route
+ * they live on, so the proxy matcher coverage tracks the page's path —
+ * not the action itself. A matcher refactor that moves a path out of
+ * the allow-list silently drops Server Function coverage too. The
+ * Next.js 16 proxy docs explicitly call this out
+ * (node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md):
+ *
+ *   "Always verify authentication and authorization inside each
+ *    Server Function rather than relying on Proxy alone."
+ *
+ * Catch pattern — see src/lib/auth-errors.ts for the canonical
+ * try/catch snippets for server actions and route handlers.
+ *
+ * Not used by M2 — M2 ships no staff-side server actions and its
+ * proxy-gated layouts/route handlers don't need this guard. The
+ * helper is dormant until the first staff-side server action lands.
+ */
+export async function requireRole(
+  allowed: ReadonlyArray<StaffRole>,
+): Promise<StaffRow> {
+  const staff = await getCurrentStaffFromCookies();
+  if (!staff) throw new AuthRequired("/staff/login");
+  if (!allowed.includes(staff.role)) throw new Forbidden();
+  return staff;
 }
 
 // ── Server (Bearer token) helpers — kept stable for Stripe API ────────
