@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseClient } from "@/lib/supabase";
+import { getSupabaseServiceClient } from "@/lib/supabase";
 import { logger } from "@/lib/logger";
 
 /**
@@ -59,14 +59,16 @@ export async function POST(req: Request) {
   }
   const source = sourceRaw as Source;
 
-  // Intentional anonymous exception (v0.22.0 / ADR-0001 Decision 2):
-  // the check-in kiosk POSTs here without a cookie session, so
-  // current_studio_id() inside scopedQuery would resolve to NULL.
-  // The class-slug lookup further down resolves studio_id from the
-  // class row; subsequent writes carry that studio_id explicitly.
-  // At pilot scale (single studio) slug uniqueness keeps this safe;
-  // post-pilot the kiosk URL will need to encode the studio.
-  const client = getSupabaseClient();
+  // Intentional anonymous exception (v0.23.0 / ADR-0001 Decision 1):
+  // the kiosk POSTs here without a cookie session, so current_studio_id()
+  // would resolve to NULL and every RLS-gated query would return empty.
+  // Service role bypasses RLS — required for this surface. The class-
+  // slug lookup further down resolves studio_id from the class row;
+  // subsequent writes carry that studio_id explicitly. At pilot scale
+  // (single studio) slug uniqueness keeps this safe; post-pilot the
+  // kiosk URL will need to encode the studio.
+  // SUPABASE_SERVICE_ROLE_KEY must be set in Vercel Production scope.
+  const client = getSupabaseServiceClient();
   if (!client) {
     return bad(
       "no_client",

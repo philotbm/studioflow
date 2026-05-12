@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_waitlist_position
 
 -- ═══ HELPER: count active booked (non-waitlisted) entries ═══════════════
 CREATE OR REPLACE FUNCTION sf_count_booked(p_class_id uuid)
-RETURNS integer LANGUAGE sql STABLE AS $$
+RETURNS integer LANGUAGE sql STABLE SECURITY DEFINER AS $$
   SELECT count(*)::integer
   FROM class_bookings
   WHERE class_id = p_class_id
@@ -75,7 +75,7 @@ $$;
 
 -- ═══ HELPER: resequence waitlist positions ══════════════════════════════
 CREATE OR REPLACE FUNCTION sf_resequence_waitlist(p_class_id uuid)
-RETURNS void LANGUAGE sql AS $$
+RETURNS void LANGUAGE sql SECURITY DEFINER AS $$
   WITH numbered AS (
     SELECT id, ROW_NUMBER() OVER (ORDER BY waitlist_position ASC) AS new_pos
     FROM class_bookings
@@ -111,8 +111,16 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
 CREATE INDEX IF NOT EXISTS idx_credit_tx_member
   ON credit_transactions(member_id, created_at DESC);
 
--- Ensure permissive access (project has no auth layer; RLS disabled elsewhere)
-ALTER TABLE credit_transactions DISABLE ROW LEVEL SECURITY;
+-- v0.23.0 (M4): RLS on for credit_transactions, mirroring every other
+-- tenant-scoped table. Service role bypasses (Stripe webhook +
+-- applyPurchase paths). Other writes go via SECURITY DEFINER sf_*
+-- functions, which bypass RLS while enforcing studio_id internally.
+ALTER TABLE credit_transactions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS credit_transactions_tenant_isolation ON credit_transactions;
+CREATE POLICY credit_transactions_tenant_isolation ON credit_transactions
+  FOR ALL
+  USING (studio_id = current_studio_id())
+  WITH CHECK (studio_id = current_studio_id());
 
 -- ═══ current_studio_id() — v0.22.0 (M3 multi-tenancy) ══════════════════
 -- ADR Decision 2. STABLE for per-transaction caching. SECURITY DEFINER
@@ -140,7 +148,7 @@ $$;
 -- be a deliberate design, not an accidental leak from the members.status
 -- column.
 CREATE OR REPLACE FUNCTION sf_check_eligibility(p_member_id uuid)
-RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
 DECLARE
   v_member RECORD;
 BEGIN
@@ -253,7 +261,7 @@ CREATE OR REPLACE FUNCTION sf_consume_credit(
   p_booking_id   uuid DEFAULT NULL,
   p_note         text DEFAULT NULL,
   p_operator_key text DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql AS $$
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_plan text;
   v_studio uuid;
@@ -300,7 +308,7 @@ CREATE OR REPLACE FUNCTION sf_refund_credit(
   p_booking_id   uuid DEFAULT NULL,
   p_note         text DEFAULT NULL,
   p_operator_key text DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql AS $$
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_plan text;
   v_studio uuid;
@@ -348,7 +356,7 @@ CREATE OR REPLACE FUNCTION sf_adjust_credit(
   p_note         text DEFAULT NULL,
   p_operator_key text DEFAULT NULL,
   p_studio_id    uuid DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql AS $$
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_member RECORD;
@@ -418,7 +426,7 @@ $$;
 -- sf_cancel_booking / sf_promote_member / sf_unpromote_member. Resolves
 -- studio_id from the class row for the booking_events insert.
 CREATE OR REPLACE FUNCTION sf_auto_promote(p_class_id uuid, p_capacity integer)
-RETURNS integer LANGUAGE plpgsql AS $$
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_studio uuid;
   v_booked integer;
@@ -489,7 +497,7 @@ CREATE OR REPLACE FUNCTION sf_book_member(
   p_class_slug  text,
   p_member_slug text,
   p_studio_id   uuid DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql AS $$
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class RECORD;
@@ -595,7 +603,7 @@ CREATE OR REPLACE FUNCTION sf_cancel_booking(
   p_class_slug  text,
   p_member_slug text,
   p_studio_id   uuid DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql AS $$
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class RECORD;
@@ -707,7 +715,7 @@ CREATE OR REPLACE FUNCTION sf_promote_member(
   p_class_slug  text,
   p_member_slug text,
   p_studio_id   uuid DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql AS $$
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class RECORD;
@@ -780,7 +788,7 @@ CREATE OR REPLACE FUNCTION sf_unpromote_member(
   p_member_slug       text,
   p_original_position integer,
   p_studio_id         uuid DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql AS $$
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class RECORD;
@@ -912,7 +920,7 @@ CREATE OR REPLACE FUNCTION sf_check_in(
   p_member_slug text,
   p_source      text,
   p_studio_id   uuid DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql AS $$
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class    RECORD;
@@ -1014,7 +1022,7 @@ $$;
 CREATE OR REPLACE FUNCTION sf_finalise_class(
   p_class_slug text,
   p_studio_id  uuid DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql AS $$
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class RECORD;
@@ -1089,7 +1097,7 @@ CREATE OR REPLACE FUNCTION sf_mark_attendance(
   p_member_slug text,
   p_outcome     text,
   p_studio_id   uuid DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql AS $$
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_studio_id uuid := COALESCE(p_studio_id, current_studio_id());
   v_class    RECORD;
@@ -1217,7 +1225,7 @@ $$;
 -- infrastructure — it does NOT violate the append-only audit
 -- invariant, which applies to production class ids only.
 CREATE OR REPLACE FUNCTION sf_refresh_qa_fixtures()
-RETURNS jsonb LANGUAGE plpgsql AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_now      timestamptz := now();
   -- v0.22.0: QA fixtures live in the demo studio. Resolved at function
@@ -1349,7 +1357,7 @@ CREATE OR REPLACE FUNCTION sf_apply_purchase(
   p_source      text,
   p_external_id text
 )
-RETURNS jsonb LANGUAGE plpgsql AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_studio          uuid;
   v_purchase_id     uuid;
@@ -1429,7 +1437,7 @@ $$;
 -- success returns { ok:true, already_refunded:true } without mutating
 -- state. Full docs + safety rationale: supabase/v0.16.0_migration.sql.
 CREATE OR REPLACE FUNCTION sf_refund_purchase(p_purchase_id uuid)
-RETURNS jsonb LANGUAGE plpgsql AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_purchase     RECORD;
   v_plan         RECORD;

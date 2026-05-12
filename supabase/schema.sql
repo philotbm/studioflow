@@ -235,9 +235,77 @@ create unique index if not exists idx_staff_studio_user on staff(studio_id, user
 
 -- Self-read policy: the proxy and server helpers query as the user's
 -- own session (anon role) and need to read THEIR row to resolve their
--- role. M4 adds manager/owner + tenant-scoped policies for staff-list
--- views.
+-- role. v0.21.0 introduced this; v0.23.0 (M4) keeps it additively
+-- alongside the tenant_isolation policy below — PostgreSQL evaluates
+-- multiple permissive policies as OR, so the operator can both read
+-- their own bootstrap row AND read every staff row in their studio.
 alter table staff enable row level security;
 drop policy if exists "staff can read self" on staff;
 create policy "staff can read self" on staff
   for select using (user_id = auth.uid());
+
+-- ═══ v0.23.0 (M4) — tenant_isolation policies on every tenant-scoped
+-- table. One policy each, FOR ALL (SELECT/INSERT/UPDATE/DELETE), using
+-- and with-check both bound to studio_id = current_studio_id(). Service
+-- role bypasses these by design; the four exception routes
+-- (src/lib/supabase.ts getSupabaseServiceClient() callers) rely on it.
+-- See docs/adr/0001-multi-tenancy.md Decision 1.
+
+alter table studios enable row level security;
+drop policy if exists studios_tenant_isolation on studios;
+create policy studios_tenant_isolation on studios
+  for all
+  using (id = current_studio_id())
+  with check (id = current_studio_id());
+
+alter table members enable row level security;
+drop policy if exists members_tenant_isolation on members;
+create policy members_tenant_isolation on members
+  for all
+  using (studio_id = current_studio_id())
+  with check (studio_id = current_studio_id());
+
+drop policy if exists staff_tenant_isolation on staff;
+create policy staff_tenant_isolation on staff
+  for all
+  using (studio_id = current_studio_id())
+  with check (studio_id = current_studio_id());
+
+alter table classes enable row level security;
+drop policy if exists classes_tenant_isolation on classes;
+create policy classes_tenant_isolation on classes
+  for all
+  using (studio_id = current_studio_id())
+  with check (studio_id = current_studio_id());
+
+alter table class_bookings enable row level security;
+drop policy if exists class_bookings_tenant_isolation on class_bookings;
+create policy class_bookings_tenant_isolation on class_bookings
+  for all
+  using (studio_id = current_studio_id())
+  with check (studio_id = current_studio_id());
+
+alter table booking_events enable row level security;
+drop policy if exists booking_events_tenant_isolation on booking_events;
+create policy booking_events_tenant_isolation on booking_events
+  for all
+  using (studio_id = current_studio_id())
+  with check (studio_id = current_studio_id());
+
+alter table plans enable row level security;
+drop policy if exists plans_tenant_isolation on plans;
+create policy plans_tenant_isolation on plans
+  for all
+  using (studio_id = current_studio_id())
+  with check (studio_id = current_studio_id());
+
+alter table purchases enable row level security;
+drop policy if exists purchases_tenant_isolation on purchases;
+create policy purchases_tenant_isolation on purchases
+  for all
+  using (studio_id = current_studio_id())
+  with check (studio_id = current_studio_id());
+
+-- credit_transactions lives in functions.sql alongside its CREATE TABLE.
+-- Its tenant_isolation policy is added in functions.sql for the same
+-- reason.

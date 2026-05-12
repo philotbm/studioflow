@@ -48,6 +48,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const URL_VAR = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const ANON_VAR = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
 // ── Default client (non-auth queries) ────────────────────────────────
 
@@ -70,6 +71,57 @@ export function getSupabaseClient(): SupabaseClient | null {
   }
 
   return _client;
+}
+
+// ── Service-role client — v0.23.0 (M4) ────────────────────────────────
+
+let _serviceClient: SupabaseClient | null = null;
+let _serviceInitAttempted = false;
+
+/**
+ * v0.23.0 (M4) — Supabase server client with the service-role key.
+ *
+ * ⚠ SERVER-ONLY. The service role bypasses RLS and has full
+ * read/write access to every table in every studio. NEVER expose
+ * this client (or the key) to a browser, NEVER use it in a layout
+ * or page component, and NEVER call it from a route handler that
+ * doesn't otherwise authenticate the caller (Bearer token, Stripe
+ * signature, or trust-the-source).
+ *
+ * Used by exactly four surfaces per docs/adr/0001-multi-tenancy.md
+ * Decision 1 and docs/specs/M4_rls.md:
+ *
+ *   - src/app/api/stripe/webhook/route.ts — Stripe signature
+ *     verifies the caller; studio_id is derived from event metadata
+ *     post-Sprint C.
+ *   - src/app/api/stripe/create-checkout-session/route.ts —
+ *     requireMemberAccessForRequest validates the Bearer token
+ *     before this client is touched; studio_id is resolved from
+ *     the validated member row.
+ *   - src/app/api/attendance/check-in/route.ts — anonymous QR-scan
+ *     kiosk; studio_id is resolved from the class row by slug.
+ *     Safe at pilot scale because slugs are globally unique.
+ *   - src/lib/entitlements/applyPurchase.ts — called from the two
+ *     authenticated paths above; never directly exposed.
+ *
+ * If you add a fifth caller, document it here AND in ADR-0001
+ * Decision 1's exception list. RLS is not enforced for this client
+ * — the caller is responsible for the studio_id discipline.
+ *
+ * SUPABASE_SERVICE_ROLE_KEY MUST be set in Vercel Production scope
+ * only (NOT Preview, NOT Development) so a leaked preview-build env
+ * dump can't compromise prod data.
+ */
+export function getSupabaseServiceClient(): SupabaseClient | null {
+  if (_serviceInitAttempted) return _serviceClient;
+  _serviceInitAttempted = true;
+
+  if (URL_VAR && SERVICE_ROLE_KEY) {
+    _serviceClient = createClient(URL_VAR, SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+  }
+  return _serviceClient;
 }
 
 // ── Browser auth client (client components) ──────────────────────────

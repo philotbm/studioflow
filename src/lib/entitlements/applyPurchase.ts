@@ -1,4 +1,4 @@
-import { getSupabaseClient } from "@/lib/supabase";
+import { getSupabaseServiceClient } from "@/lib/supabase";
 import type { Plan } from "@/lib/plans";
 
 /**
@@ -83,15 +83,16 @@ export type ApplyPurchaseResult = ApplyPurchaseOk | ApplyPurchaseErr;
 export async function applyPurchase(
   input: ApplyPurchaseInput,
 ): Promise<ApplyPurchaseResult> {
-  // Intentional cross-session exception (v0.22.0 / ADR-0001 Decision 2):
+  // Intentional cross-session exception (v0.23.0 / ADR-0001 Decision 1):
   // this function is called from /api/stripe/webhook (server-to-server,
   // no caller session) and from /api/dev/fake-purchase + the operator
-  // panel (cookie session). The sf_apply_purchase RPC resolves studio_id
-  // from the p_member_id row internally, and the post-RPC purchases
-  // UPDATE filters by id (PK, globally unique). So we don't need
-  // scopedQuery's session-aware proxy here — the anon client + RPC
-  // gives us the right behaviour from every caller.
-  const client = getSupabaseClient();
+  // panel (cookie session). Service role bypasses RLS — required so the
+  // webhook path can write without a cookie. sf_apply_purchase resolves
+  // studio_id from the p_member_id row internally; the post-RPC
+  // purchases UPDATE filters by id (PK, globally unique). Do NOT switch
+  // to scopedQuery() or getSupabaseClient() here.
+  // SUPABASE_SERVICE_ROLE_KEY must be set in Vercel Production scope.
+  const client = getSupabaseServiceClient();
   if (!client) {
     return {
       ok: false,
