@@ -7,7 +7,7 @@ import {
 } from "@/lib/revenue";
 import { formatPriceEur } from "@/lib/plans";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.17.2 GET-only revenue CSV export.
  *
@@ -96,7 +96,7 @@ function buildCsv(summary: RevenueSummary, generatedAt: Date): string {
   return lines.join("\r\n") + "\r\n";
 }
 
-export const GET = wrapRouteHandlerWithSentry(
+export const GET = withSentryCapture(
   async function GET(req: Request) {
   const url = new URL(req.url);
   const parsed = parseRange(url.searchParams.get("range"));

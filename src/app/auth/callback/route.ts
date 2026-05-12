@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseServerAuthClient } from "@/lib/supabase";
 import { isSafeNextPath } from "@/lib/auth";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.20.1 magic-link decision tree (v0.21.0: staff intent branch).
  *
@@ -64,7 +64,7 @@ function staffLoginRedirect(
   return NextResponse.redirect(url);
 }
 
-export const GET = wrapRouteHandlerWithSentry(
+export const GET = withSentryCapture(
   async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");

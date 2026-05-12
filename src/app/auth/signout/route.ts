@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseServerAuthClient } from "@/lib/supabase";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.20.1 / v0.21.0 sign-out route.
  *
@@ -37,14 +37,14 @@ async function handle(req: NextRequest) {
   return NextResponse.redirect(loginUrl);
 }
 
-export const GET = wrapRouteHandlerWithSentry(
+export const GET = withSentryCapture(
   async function GET(req: NextRequest) {
   return handle(req);
 },
   { method: "GET", parameterizedRoute: "/auth/signout" },
 );
 
-export const POST = wrapRouteHandlerWithSentry(
+export const POST = withSentryCapture(
   async function POST(req: NextRequest) {
   return handle(req);
 },

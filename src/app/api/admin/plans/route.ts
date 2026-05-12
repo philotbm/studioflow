@@ -8,7 +8,7 @@ import {
 import { validatePlanHard, planSoftWarnings } from "@/lib/plan-validation";
 import type { PlanType } from "@/lib/plans";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.14.2 plan-catalogue admin endpoint.
  *
@@ -69,7 +69,7 @@ function asPlanType(v: unknown): PlanType | null {
   return v === "class_pack" || v === "unlimited" ? v : null;
 }
 
-export const GET = wrapRouteHandlerWithSentry(
+export const GET = withSentryCapture(
   async function GET() {
   const plans = await listPlans();
   return NextResponse.json({ ok: true, plans });
@@ -77,7 +77,7 @@ export const GET = wrapRouteHandlerWithSentry(
   { method: "GET", parameterizedRoute: "/api/admin/plans" },
 );
 
-export const POST = wrapRouteHandlerWithSentry(
+export const POST = withSentryCapture(
   async function POST(req: Request) {
   const raw = (await req.json().catch(() => null)) as CreateBody | null;
   if (!raw) {
@@ -155,7 +155,7 @@ export const POST = wrapRouteHandlerWithSentry(
   { method: "POST", parameterizedRoute: "/api/admin/plans" },
 );
 
-export const PUT = wrapRouteHandlerWithSentry(
+export const PUT = withSentryCapture(
   async function PUT(req: Request) {
   const raw = (await req.json().catch(() => null)) as EditBody | null;
   if (!raw) {
@@ -233,7 +233,7 @@ export const PUT = wrapRouteHandlerWithSentry(
   { method: "PUT", parameterizedRoute: "/api/admin/plans" },
 );
 
-export const PATCH = wrapRouteHandlerWithSentry(
+export const PATCH = withSentryCapture(
   async function PATCH(req: Request) {
   const raw = (await req.json().catch(() => null)) as PatchBody | null;
   if (!raw) {

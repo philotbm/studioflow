@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 import { scopedQuery } from "@/lib/db";
 /**
  * v0.8.4.2 QA environment status endpoint.
@@ -38,7 +38,7 @@ const QA_CLASS_SLUGS = [
   "qa-future",
 ] as const;
 
-export const GET = wrapRouteHandlerWithSentry(
+export const GET = withSentryCapture(
   async function GET() {
   const client = await scopedQuery();
   if (!client) {

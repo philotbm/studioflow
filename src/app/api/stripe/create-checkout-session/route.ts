@@ -5,7 +5,7 @@ import { requireMemberAccessForRequest } from "@/lib/auth";
 import { logger } from "@/lib/logger";
 import { planDescription, type Plan } from "@/lib/plans";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * POST /api/stripe/create-checkout-session
  *
@@ -41,7 +41,7 @@ export const runtime = "nodejs";
 
 type Body = { memberSlug?: string; planId?: string };
 
-export const POST = wrapRouteHandlerWithSentry(
+export const POST = withSentryCapture(
   async function POST(req: Request) {
   const body = (await req.json().catch(() => null)) as Body | null;
   if (!body?.memberSlug || !body?.planId) {

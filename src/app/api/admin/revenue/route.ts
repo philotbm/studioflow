@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchRevenue, parseRange } from "@/lib/revenue";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.17.2 GET-only revenue summary.
  *
@@ -17,7 +17,7 @@ import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
 
 export const runtime = "nodejs";
 
-export const GET = wrapRouteHandlerWithSentry(
+export const GET = withSentryCapture(
   async function GET(req: Request) {
   const url = new URL(req.url);
   const parsed = parseRange(url.searchParams.get("range"));

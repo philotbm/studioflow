@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.9.0.1 cancellation QA trace.
  *
@@ -175,14 +175,14 @@ async function handle(req: Request) {
   }
 }
 
-export const POST = wrapRouteHandlerWithSentry(
+export const POST = withSentryCapture(
   async function POST(req: Request) {
   return handle(req);
 },
   { method: "POST", parameterizedRoute: "/api/admin/verify-cancellation" },
 );
 
-export const GET = wrapRouteHandlerWithSentry(
+export const GET = withSentryCapture(
   async function GET(req: Request) {
   // Accept query params too, for easy curl testing
   const url = new URL(req.url);

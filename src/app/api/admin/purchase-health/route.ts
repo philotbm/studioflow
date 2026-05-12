@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.15.1.1 GET-only purchase diagnostics.
  *
@@ -121,7 +121,7 @@ function projectRowLegacy(r: PurchaseJoinedRowLegacy): PurchaseSummaryRowLegacy 
   };
 }
 
-export const GET = wrapRouteHandlerWithSentry(
+export const GET = withSentryCapture(
   async function GET() {
   const stripeConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
   const webhookConfigured = Boolean(process.env.STRIPE_WEBHOOK_SECRET);

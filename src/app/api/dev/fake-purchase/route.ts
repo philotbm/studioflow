@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 import { applyPurchase, type PurchaseSource } from "@/lib/entitlements/applyPurchase";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.13.0 / v0.15.0 dev + operator fulfilment fallback for when Stripe
  * is not configured.
@@ -55,7 +55,7 @@ function asAllowedSource(v: unknown): PurchaseSource {
   return "dev_fake";
 }
 
-export const POST = wrapRouteHandlerWithSentry(
+export const POST = withSentryCapture(
   async function POST(req: Request) {
   const body = (await req.json().catch(() => null)) as Body | null;
   if (!body?.memberSlug || !body?.planId) {

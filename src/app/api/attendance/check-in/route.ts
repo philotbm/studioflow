@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabase";
 import { logger } from "@/lib/logger";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.8.4.3 server-side check-in.
  *
@@ -44,7 +44,7 @@ function bad(code: string, message: string, status = 400) {
   return NextResponse.json({ ok: false, code, message }, { status });
 }
 
-export const POST = wrapRouteHandlerWithSentry(
+export const POST = withSentryCapture(
   async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as CheckInBody;
   const classSlug = body.classSlug?.trim();

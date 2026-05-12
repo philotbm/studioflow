@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 import { logger } from "@/lib/logger";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.16.0 operator refund endpoint.
  *
@@ -33,7 +33,7 @@ type Body = { purchaseId?: unknown };
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export const POST = wrapRouteHandlerWithSentry(
+export const POST = withSentryCapture(
   async function POST(req: Request) {
   const body = (await req.json().catch(() => null)) as Body | null;
   const purchaseId =

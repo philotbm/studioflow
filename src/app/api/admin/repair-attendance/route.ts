@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.8.4.3 attendance repair endpoint.
  *
@@ -22,7 +22,7 @@ import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
  * No other table is touched.
  */
 
-export const POST = wrapRouteHandlerWithSentry(
+export const POST = withSentryCapture(
   async function POST() {
   const client = await scopedQuery();
   if (!client) {
@@ -67,7 +67,7 @@ export const POST = wrapRouteHandlerWithSentry(
   { method: "POST", parameterizedRoute: "/api/admin/repair-attendance" },
 );
 
-export const GET = wrapRouteHandlerWithSentry(
+export const GET = withSentryCapture(
   async function GET() {
   return POST();
 },

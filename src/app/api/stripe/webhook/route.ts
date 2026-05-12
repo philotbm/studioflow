@@ -4,7 +4,7 @@ import { applyPurchase } from "@/lib/entitlements/applyPurchase";
 import { logger } from "@/lib/logger";
 import { getSupabaseServiceClient } from "@/lib/supabase";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * POST /api/stripe/webhook
  *
@@ -29,7 +29,7 @@ import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
 
 export const runtime = "nodejs";
 
-export const POST = wrapRouteHandlerWithSentry(
+export const POST = withSentryCapture(
   async function POST(req: Request) {
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   const stripeKey = process.env.STRIPE_SECRET_KEY;

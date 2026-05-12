@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
-import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.9.2 waitlist promotion enforcement trace.
  *
@@ -139,14 +139,14 @@ async function handle(req: Request) {
   }
 }
 
-export const POST = wrapRouteHandlerWithSentry(
+export const POST = withSentryCapture(
   async function POST(req: Request) {
   return handle(req);
 },
   { method: "POST", parameterizedRoute: "/api/admin/verify-promote" },
 );
 
-export const GET = wrapRouteHandlerWithSentry(
+export const GET = withSentryCapture(
   async function GET(req: Request) {
   const url = new URL(req.url);
   const memberSlug = url.searchParams.get("memberSlug") ?? undefined;
