@@ -6,11 +6,22 @@
 import "@/lib/sentry-init";
 
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 
-export function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {
   // v0.23.1 verification harness — REMOVED in v0.23.2 cleanup.
+  // Explicit captureException + flush mirroring the v0.22.4 pattern
+  // in /api/dev/sentry-test. If Sentry.init() actually ran via the
+  // side-effect import above, this WILL land in Sentry. The
+  // [sentry-init] module-load console.log canary tells us whether
+  // the side-effect import ran at all — distinguishing
+  // "import tree-shaken away" from "init ran but auto-capture
+  // doesn't fire for Next 16 app-router routes."
   if (req.nextUrl.searchParams.get("throw") === "1") {
-    throw new Error("Sentry shared-init smoke — deliberate throw from /api/health");
+    const err = new Error("Sentry shared-init smoke — deliberate throw from /api/health");
+    Sentry.captureException(err);
+    await Sentry.flush(2000);
+    throw err;
   }
   return NextResponse.json({
     status: "ok",
