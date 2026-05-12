@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 import { applyPurchase, type PurchaseSource } from "@/lib/entitlements/applyPurchase";
 
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.13.0 / v0.15.0 dev + operator fulfilment fallback for when Stripe
  * is not configured.
@@ -54,7 +55,8 @@ function asAllowedSource(v: unknown): PurchaseSource {
   return "dev_fake";
 }
 
-export async function POST(req: Request) {
+export const POST = withSentryCapture(
+  async function POST(req: Request) {
   const body = (await req.json().catch(() => null)) as Body | null;
   if (!body?.memberSlug || !body?.planId) {
     return NextResponse.json(
@@ -113,4 +115,6 @@ export async function POST(req: Request) {
     priceCentsPaid: result.priceCentsPaid,
     creditsGranted: result.creditsGranted,
   });
-}
+},
+  { method: "POST", parameterizedRoute: "/api/dev/fake-purchase" },
+);

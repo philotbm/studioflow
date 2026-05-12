@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchRevenue, parseRange } from "@/lib/revenue";
 
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.17.2 GET-only revenue summary.
  *
@@ -16,7 +17,8 @@ import { fetchRevenue, parseRange } from "@/lib/revenue";
 
 export const runtime = "nodejs";
 
-export async function GET(req: Request) {
+export const GET = withSentryCapture(
+  async function GET(req: Request) {
   const url = new URL(req.url);
   const parsed = parseRange(url.searchParams.get("range"));
   if (!parsed.ok) {
@@ -34,4 +36,6 @@ export async function GET(req: Request) {
     );
   }
   return NextResponse.json(result.summary);
-}
+},
+  { method: "GET", parameterizedRoute: "/api/admin/revenue" },
+);

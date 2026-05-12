@@ -1,7 +1,6 @@
-import { NextResponse, type NextRequest } from "next/server";
-import * as Sentry from "@sentry/nextjs";
+import { NextResponse } from "next/server";
+import { withSentryCapture } from "@/lib/with-sentry";
 import { scopedQuery } from "@/lib/db";
-
 /**
  * v0.8.4.2 QA environment status endpoint.
  *
@@ -39,18 +38,8 @@ const QA_CLASS_SLUGS = [
   "qa-future",
 ] as const;
 
-export async function GET(req: NextRequest) {
-  // v0.23.1 verification harness — REMOVED in v0.23.2 cleanup.
-  // Explicit captureException + flush mirroring the v0.22.4 pattern.
-  // Parallel surface to the /api/health harness; this one verifies
-  // the supabase.ts side-effect chain (the "real" production
-  // entry-point pattern) once Phil signs in on prod.
-  if (req.nextUrl.searchParams.get("throw") === "1") {
-    const err = new Error("Sentry shared-init smoke — deliberate throw from /api/qa/status");
-    Sentry.captureException(err);
-    await Sentry.flush(2000);
-    throw err;
-  }
+export const GET = withSentryCapture(
+  async function GET() {
   const client = await scopedQuery();
   if (!client) {
     return NextResponse.json(
@@ -139,4 +128,6 @@ export async function GET(req: NextRequest) {
     missingMembers,
     fixtureCount,
   });
-}
+},
+  { method: "GET", parameterizedRoute: "/api/qa/status" },
+);

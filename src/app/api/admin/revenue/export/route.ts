@@ -7,6 +7,7 @@ import {
 } from "@/lib/revenue";
 import { formatPriceEur } from "@/lib/plans";
 
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.17.2 GET-only revenue CSV export.
  *
@@ -95,7 +96,8 @@ function buildCsv(summary: RevenueSummary, generatedAt: Date): string {
   return lines.join("\r\n") + "\r\n";
 }
 
-export async function GET(req: Request) {
+export const GET = withSentryCapture(
+  async function GET(req: Request) {
   const url = new URL(req.url);
   const parsed = parseRange(url.searchParams.get("range"));
   if (!parsed.ok) {
@@ -127,4 +129,6 @@ export async function GET(req: Request) {
       "Cache-Control": "no-store",
     },
   });
-}
+},
+  { method: "GET", parameterizedRoute: "/api/admin/revenue/export" },
+);

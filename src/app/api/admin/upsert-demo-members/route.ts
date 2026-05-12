@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.12.1 No-Entitlement Member Fix.
  *
@@ -138,10 +139,16 @@ async function handle() {
   });
 }
 
-export async function GET() {
+export const GET = withSentryCapture(
+  async function GET() {
   return handle();
-}
+},
+  { method: "GET", parameterizedRoute: "/api/admin/upsert-demo-members" },
+);
 
-export async function POST() {
+export const POST = withSentryCapture(
+  async function POST() {
   return handle();
-}
+},
+  { method: "POST", parameterizedRoute: "/api/admin/upsert-demo-members" },
+);

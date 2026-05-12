@@ -8,6 +8,7 @@ import {
 import { validatePlanHard, planSoftWarnings } from "@/lib/plan-validation";
 import type { PlanType } from "@/lib/plans";
 
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.14.2 plan-catalogue admin endpoint.
  *
@@ -68,12 +69,16 @@ function asPlanType(v: unknown): PlanType | null {
   return v === "class_pack" || v === "unlimited" ? v : null;
 }
 
-export async function GET() {
+export const GET = withSentryCapture(
+  async function GET() {
   const plans = await listPlans();
   return NextResponse.json({ ok: true, plans });
-}
+},
+  { method: "GET", parameterizedRoute: "/api/admin/plans" },
+);
 
-export async function POST(req: Request) {
+export const POST = withSentryCapture(
+  async function POST(req: Request) {
   const raw = (await req.json().catch(() => null)) as CreateBody | null;
   if (!raw) {
     return NextResponse.json(
@@ -146,9 +151,12 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({ ok: true, plan: result.plan });
-}
+},
+  { method: "POST", parameterizedRoute: "/api/admin/plans" },
+);
 
-export async function PUT(req: Request) {
+export const PUT = withSentryCapture(
+  async function PUT(req: Request) {
   const raw = (await req.json().catch(() => null)) as EditBody | null;
   if (!raw) {
     return NextResponse.json(
@@ -221,9 +229,12 @@ export async function PUT(req: Request) {
     );
   }
   return NextResponse.json({ ok: true, plan: result.plan });
-}
+},
+  { method: "PUT", parameterizedRoute: "/api/admin/plans" },
+);
 
-export async function PATCH(req: Request) {
+export const PATCH = withSentryCapture(
+  async function PATCH(req: Request) {
   const raw = (await req.json().catch(() => null)) as PatchBody | null;
   if (!raw) {
     return NextResponse.json(
@@ -253,4 +264,6 @@ export async function PATCH(req: Request) {
     );
   }
   return NextResponse.json({ ok: true, plan: result.plan });
-}
+},
+  { method: "PATCH", parameterizedRoute: "/api/admin/plans" },
+);

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabase";
 import { logger } from "@/lib/logger";
 
+import { withSentryCapture } from "@/lib/with-sentry";
 /**
  * v0.8.4.3 server-side check-in.
  *
@@ -43,7 +44,8 @@ function bad(code: string, message: string, status = 400) {
   return NextResponse.json({ ok: false, code, message }, { status });
 }
 
-export async function POST(req: Request) {
+export const POST = withSentryCapture(
+  async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as CheckInBody;
   const classSlug = body.classSlug?.trim();
   const memberSlug = body.memberSlug?.trim();
@@ -203,4 +205,6 @@ export async function POST(req: Request) {
     source,
     alreadyCheckedIn: false,
   });
-}
+},
+  { method: "POST", parameterizedRoute: "/api/attendance/check-in" },
+);
