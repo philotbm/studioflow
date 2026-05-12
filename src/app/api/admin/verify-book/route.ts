@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
+import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
 /**
  * v0.9.2 booking enforcement trace.
  *
@@ -129,11 +130,15 @@ async function handle(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+export const POST = wrapRouteHandlerWithSentry(
+  async function POST(req: Request) {
   return handle(req);
-}
+},
+  { method: "POST", parameterizedRoute: "/api/admin/verify-book" },
+);
 
-export async function GET(req: Request) {
+export const GET = wrapRouteHandlerWithSentry(
+  async function GET(req: Request) {
   const url = new URL(req.url);
   const memberSlug = url.searchParams.get("memberSlug") ?? undefined;
   const classSlug = url.searchParams.get("classSlug") ?? undefined;
@@ -144,4 +149,6 @@ export async function GET(req: Request) {
       body: JSON.stringify({ memberSlug, classSlug }),
     }),
   );
-}
+},
+  { method: "GET", parameterizedRoute: "/api/admin/verify-book" },
+);

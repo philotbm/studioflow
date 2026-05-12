@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseServerAuthClient } from "@/lib/supabase";
 import { isSafeNextPath } from "@/lib/auth";
 
+import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
 /**
  * v0.20.1 magic-link decision tree (v0.21.0: staff intent branch).
  *
@@ -63,7 +64,8 @@ function staffLoginRedirect(
   return NextResponse.redirect(url);
 }
 
-export async function GET(req: NextRequest) {
+export const GET = wrapRouteHandlerWithSentry(
+  async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const nextParam = url.searchParams.get("next");
@@ -157,4 +159,6 @@ export async function GET(req: NextRequest) {
 
   // 3. No match.
   return loginRedirect(origin, { error: "no-member" });
-}
+},
+  { method: "GET", parameterizedRoute: "/auth/callback" },
+);

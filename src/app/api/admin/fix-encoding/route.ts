@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
+import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
 /**
  * v0.9.3 mojibake sanitiser for stored member JSON fields.
  *
@@ -210,7 +211,8 @@ function confirmFromUrl(req: Request): boolean {
   return v === "true" || v === "1" || v === "yes";
 }
 
-export async function POST(req: Request) {
+export const POST = wrapRouteHandlerWithSentry(
+  async function POST(req: Request) {
   // Accept confirm from either the body or the query string so curl
   // and fetch both work. Body takes precedence.
   let confirm = confirmFromUrl(req);
@@ -223,9 +225,14 @@ export async function POST(req: Request) {
     // no body / not JSON — stick with query-string value
   }
   return handle(confirm);
-}
+},
+  { method: "POST", parameterizedRoute: "/api/admin/fix-encoding" },
+);
 
-export async function GET(req: Request) {
+export const GET = wrapRouteHandlerWithSentry(
+  async function GET(req: Request) {
   // GET is always a dry run — never mutates.
   return handle(false);
-}
+},
+  { method: "GET", parameterizedRoute: "/api/admin/fix-encoding" },
+);

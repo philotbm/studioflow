@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
+import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
 /**
  * v0.8.4.2 QA fixture refresh endpoint.
  *
@@ -383,10 +384,16 @@ async function handle() {
   });
 }
 
-export async function GET() {
+export const GET = wrapRouteHandlerWithSentry(
+  async function GET() {
   return handle();
-}
+},
+  { method: "GET", parameterizedRoute: "/api/qa/refresh" },
+);
 
-export async function POST() {
+export const POST = wrapRouteHandlerWithSentry(
+  async function POST() {
   return handle();
-}
+},
+  { method: "POST", parameterizedRoute: "/api/qa/refresh" },
+);

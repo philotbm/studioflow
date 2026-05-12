@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
+import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
 /**
  * v0.9.0.1 cancellation QA trace.
  *
@@ -174,11 +175,15 @@ async function handle(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+export const POST = wrapRouteHandlerWithSentry(
+  async function POST(req: Request) {
   return handle(req);
-}
+},
+  { method: "POST", parameterizedRoute: "/api/admin/verify-cancellation" },
+);
 
-export async function GET(req: Request) {
+export const GET = wrapRouteHandlerWithSentry(
+  async function GET(req: Request) {
   // Accept query params too, for easy curl testing
   const url = new URL(req.url);
   const memberSlug = url.searchParams.get("memberSlug") ?? undefined;
@@ -189,4 +194,6 @@ export async function GET(req: Request) {
     body: JSON.stringify({ memberSlug, classSlug }),
   });
   return handle(synthetic);
-}
+},
+  { method: "GET", parameterizedRoute: "/api/admin/verify-cancellation" },
+);

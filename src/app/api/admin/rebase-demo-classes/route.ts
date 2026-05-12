@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
+import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
 // TODO(post-M3): this cron iterates every classes row but doesn't filter
 // by studio. Pre-M3 (single studio) that was fine. Post-M3 it's
 // implicitly safe because scopedQuery's proxy now scopes every
@@ -230,10 +231,16 @@ async function handle() {
   });
 }
 
-export async function GET() {
+export const GET = wrapRouteHandlerWithSentry(
+  async function GET() {
   return handle();
-}
+},
+  { method: "GET", parameterizedRoute: "/api/admin/rebase-demo-classes" },
+);
 
-export async function POST() {
+export const POST = wrapRouteHandlerWithSentry(
+  async function POST() {
   return handle();
-}
+},
+  { method: "POST", parameterizedRoute: "/api/admin/rebase-demo-classes" },
+);

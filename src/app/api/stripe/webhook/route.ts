@@ -4,6 +4,7 @@ import { applyPurchase } from "@/lib/entitlements/applyPurchase";
 import { logger } from "@/lib/logger";
 import { getSupabaseServiceClient } from "@/lib/supabase";
 
+import { wrapRouteHandlerWithSentry } from "@sentry/nextjs";
 /**
  * POST /api/stripe/webhook
  *
@@ -28,7 +29,8 @@ import { getSupabaseServiceClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
-export async function POST(req: Request) {
+export const POST = wrapRouteHandlerWithSentry(
+  async function POST(req: Request) {
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   const stripeKey = process.env.STRIPE_SECRET_KEY;
 
@@ -142,4 +144,6 @@ export async function POST(req: Request) {
     planTypeApplied: result.planTypeApplied,
     creditsRemaining: result.creditsRemaining,
   });
-}
+},
+  { method: "POST", parameterizedRoute: "/api/stripe/webhook" },
+);
