@@ -1,3 +1,10 @@
+// v0.23.1: side-effect Sentry init. MUST be the first import in this
+// file — supabase.ts is in the import graph of every Node-runtime
+// route handler / RSC / server action via scopedQuery, so this import
+// is the universal cold-start init site for Sentry on the Node side.
+// See docs/specs/sentry_shared_init.md and src/lib/sentry-init.ts.
+import "@/lib/sentry-init";
+
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   createBrowserClient,

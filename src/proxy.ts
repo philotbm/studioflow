@@ -1,3 +1,10 @@
+// v0.23.1: side-effect Sentry init. MUST be the first import in this
+// file — Sentry needs to initialize before any handler logic runs so
+// the OpenTelemetry-based route-handler instrumentation can register
+// listeners before the first request enters the dispatch chain. See
+// docs/specs/sentry_shared_init.md and src/lib/sentry-init.ts.
+import "@/lib/sentry-init";
+
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseProxyAuthClient } from "@/lib/supabase";
 import type { StaffRole } from "@/lib/auth";
