@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { scopedQuery } from "@/lib/db";
 
 /**
@@ -38,7 +38,11 @@ const QA_CLASS_SLUGS = [
   "qa-future",
 ] as const;
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // v0.23.1 verification harness — REMOVED in v0.23.2 cleanup.
+  if (req.nextUrl.searchParams.get("throw") === "1") {
+    throw new Error("Sentry shared-init smoke — deliberate throw from /api/qa/status");
+  }
   const client = await scopedQuery();
   if (!client) {
     return NextResponse.json(
