@@ -45,16 +45,6 @@
  */
 import * as Sentry from "@sentry/nextjs";
 
-// v0.23.1 verification canary — REMOVED in v0.23.2 cleanup.
-// Tells us in Vercel Runtime Logs whether this module's
-// side-effect import actually runs on function cold start.
-// Distinguishes "Turbopack tree-shook the import away" from
-// "Sentry.init ran but auto-capture didn't fire."
-console.log(
-  "[sentry-init] module loaded, DSN:",
-  process.env.NEXT_PUBLIC_SENTRY_DSN ? "set" : "missing",
-);
-
 if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
