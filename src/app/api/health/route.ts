@@ -24,7 +24,7 @@ export const GET = withSentryCapture(
     return NextResponse.json({
       status: "ok",
       system: "studioflow",
-      version: "v0.23.5",
+      version: "v0.25.0",
     });
   },
   { method: "GET", parameterizedRoute: "/api/health" },
