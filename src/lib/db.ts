@@ -78,9 +78,10 @@ const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "purchases",
   "plans",
   "v_members_with_access",
-  // Add: any tenant-scoped table or view added post-M3 (e.g.
-  // class_templates in Sprint A, pending_actions / action_events in
-  // Sprint D).
+  // v0.24.0 (Sprint A) — recurring class templates.
+  "class_templates",
+  // Add: any tenant-scoped table or view added later (e.g.
+  // pending_actions / action_events in Sprint D).
 ]);
 
 // Sentinel for sessions with no studio context (anonymous, or a

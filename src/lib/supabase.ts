@@ -95,7 +95,7 @@ let _serviceInitAttempted = false;
  * doesn't otherwise authenticate the caller (Bearer token, Stripe
  * signature, or trust-the-source).
  *
- * Used by exactly four surfaces per docs/adr/0001-multi-tenancy.md
+ * Used by exactly six surfaces per docs/adr/0001-multi-tenancy.md
  * Decision 1 and docs/specs/M4_rls.md:
  *
  *   - src/app/api/stripe/webhook/route.ts — Stripe signature
@@ -110,8 +110,21 @@ let _serviceInitAttempted = false;
  *     Safe at pilot scale because slugs are globally unique.
  *   - src/lib/entitlements/applyPurchase.ts — called from the two
  *     authenticated paths above; never directly exposed.
+ *   - v0.24.0: src/app/api/cron/materialise-templates/route.ts —
+ *     Vercel cron with CRON_SECRET Bearer auth. Iterates every studio
+ *     to materialise class_templates into classes rows. studio_id
+ *     discipline enforced in the materialiseTemplate helper (every
+ *     insert carries the studio's id).
+ *   - v0.24.0: src/app/app/classes/templates/actions.ts
+ *     republishFutureForTemplate — operator-invoked "Republish all
+ *     future classes" action. requireRole(['owner','manager']) gates
+ *     the entry point; the helper UPDATEs existing classes rows
+ *     in-place (no DELETE, so bookings stay attached). Uses the
+ *     service-role client to keep the helper symmetric with the cron;
+ *     studio_id is verified against the template's studio_id before
+ *     any mutation.
  *
- * If you add a fifth caller, document it here AND in ADR-0001
+ * If you add a seventh caller, document it here AND in ADR-0001
  * Decision 1's exception list. RLS is not enforced for this client
  * — the caller is responsible for the studio_id discipline.
  *

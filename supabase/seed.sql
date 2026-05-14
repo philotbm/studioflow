@@ -326,6 +326,77 @@ ON CONFLICT (studio_id, user_id) DO NOTHING;
 
 
 -- ═══════════════════════════════════════════════════════════════════════
+-- CLASS_TEMPLATES — v0.24.0 (Sprint A demo set)
+-- ═══════════════════════════════════════════════════════════════════════
+-- Three representative weekly templates for the demo studio. The
+-- /api/cron/materialise-templates cron picks these up on its next run
+-- and materialises classes rows out to the studio's
+-- materialisation_horizon_weeks (default 8 weeks).
+--
+-- instructor_id is resolved by a sub-SELECT against Phil's staff row.
+-- The staff INSERT above is a no-op until Phil has signed in once; the
+-- sub-SELECT therefore returns NULL on a fresh DB until then, and the
+-- templates land with instructor_id = NULL (materialise cron falls back
+-- to "TBD" for instructor_name). Re-running this seed AFTER Phil's
+-- first sign-in resolves the instructor_id idempotently (the WHERE NOT
+-- EXISTS guard makes each template insert run-once).
+
+INSERT INTO class_templates (
+  studio_id, name, weekday, start_time_local, duration_minutes,
+  instructor_id, capacity
+)
+SELECT
+  'e0000000-0000-0000-0000-000000000001'::uuid,
+  'Vinyasa Flow', 1, '18:00'::time, 60,
+  (SELECT id FROM staff
+    WHERE studio_id = 'e0000000-0000-0000-0000-000000000001'::uuid
+      AND full_name = 'Phil'
+    LIMIT 1),
+  20
+WHERE NOT EXISTS (
+  SELECT 1 FROM class_templates
+   WHERE studio_id = 'e0000000-0000-0000-0000-000000000001'::uuid
+     AND name = 'Vinyasa Flow'
+);
+
+INSERT INTO class_templates (
+  studio_id, name, weekday, start_time_local, duration_minutes,
+  instructor_id, capacity
+)
+SELECT
+  'e0000000-0000-0000-0000-000000000001'::uuid,
+  'Morning HIIT', 3, '07:00'::time, 45,
+  (SELECT id FROM staff
+    WHERE studio_id = 'e0000000-0000-0000-0000-000000000001'::uuid
+      AND full_name = 'Phil'
+    LIMIT 1),
+  15
+WHERE NOT EXISTS (
+  SELECT 1 FROM class_templates
+   WHERE studio_id = 'e0000000-0000-0000-0000-000000000001'::uuid
+     AND name = 'Morning HIIT'
+);
+
+INSERT INTO class_templates (
+  studio_id, name, weekday, start_time_local, duration_minutes,
+  instructor_id, capacity
+)
+SELECT
+  'e0000000-0000-0000-0000-000000000001'::uuid,
+  'Restorative Yoga', 6, '10:00'::time, 75,
+  (SELECT id FROM staff
+    WHERE studio_id = 'e0000000-0000-0000-0000-000000000001'::uuid
+      AND full_name = 'Phil'
+    LIMIT 1),
+  12
+WHERE NOT EXISTS (
+  SELECT 1 FROM class_templates
+   WHERE studio_id = 'e0000000-0000-0000-0000-000000000001'::uuid
+     AND name = 'Restorative Yoga'
+);
+
+
+-- ═══════════════════════════════════════════════════════════════════════
 -- DEMO MEMBER UNLINK GUARD — v0.23.3
 -- ═══════════════════════════════════════════════════════════════════════
 -- Defensive: ensure no curated demo-studio members row carries a real

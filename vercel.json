@@ -1,8 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/admin/rebase-demo-classes",
-      "schedule": "0 3 * * *"
+      "path": "/api/cron/materialise-templates",
+      "schedule": "0 5 * * *"
     }
   ]
 }

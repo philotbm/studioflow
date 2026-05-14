@@ -22,6 +22,14 @@ create table if not exists studios (
   member_count_cap       int,  -- 50 / 250 / NULL (starter/pro/studio)
   stripe_customer_id     text,
   stripe_subscription_id text,
+  -- v0.24.0 (Sprint A) — IANA timezone the studio operates in. All
+  -- class_templates inherit this; the materialise cron uses it to
+  -- convert wall-clock start_time_local into UTC starts_at on classes.
+  tz                     text not null default 'Europe/Dublin',
+  -- v0.24.0 — how far out the cron materialises template instances.
+  -- Configurable per studio; 8 weeks suits weekly-cycle studios.
+  materialisation_horizon_weeks integer not null default 8
+                           check (materialisation_horizon_weeks between 2 and 26),
   created_at             timestamptz not null default now()
 );
 
@@ -81,9 +89,27 @@ create table if not exists classes (
   check_in_window_minutes   integer not null default 15
                               check (check_in_window_minutes >= 0
                                      and check_in_window_minutes <= 240),
+  -- v0.24.0 (Sprint A) — set by /api/cron/materialise-templates for
+  -- rows materialised from a class_templates row. NULL on legacy ad-hoc
+  -- classes (the demo seed's six fixed slugs plus anything inserted
+  -- pre-Sprint-A). FK constraint added via ALTER at the end of this
+  -- file (class_templates is defined below — schema.sql ordering puts
+  -- studios first, then data tables, then staff, with class_templates
+  -- after staff because class_templates.instructor_id references staff).
+  template_id               uuid,
   created_at                timestamptz not null default now(),
   updated_at                timestamptz not null default now()
 );
+
+-- v0.24.0 — partial index for template-keyed lookups (only
+-- materialised rows are interesting).
+create index if not exists idx_classes_template_id
+  on classes(template_id) where template_id is not null;
+
+-- v0.24.0 — unique constraint backing the cron's idempotent upsert.
+-- One materialised class per (template, starts_at).
+create unique index if not exists idx_classes_template_scheduled_at_unique
+  on classes(template_id, starts_at) where template_id is not null;
 
 -- ═══ CLASS_BOOKINGS ════════════════════════════════════════════════════
 create table if not exists class_bookings (
@@ -244,6 +270,75 @@ drop policy if exists "staff can read self" on staff;
 create policy "staff can read self" on staff
   for select using (user_id = auth.uid());
 
+-- ═══ CLASS_TEMPLATES — v0.24.0 (Sprint A recurring class templates) ══
+-- Operator-defined weekly templates. The /api/cron/materialise-templates
+-- cron reads these daily and inserts/updates classes rows out to
+-- studios.materialisation_horizon_weeks (default 8 weeks).
+--
+-- instructor_id is nullable — a template is valid (and materialisable)
+-- without an assigned instructor; classes.instructor_name falls back to
+-- "TBD" at materialisation time. ON DELETE SET NULL on instructor_id
+-- so deleting a staff member doesn't cascade-delete templates.
+--
+-- valid_from / valid_until bracket the active window. valid_until NULL
+-- means "no end date." Both are local dates (no timezone); the studio's
+-- tz governs interpretation.
+create table if not exists class_templates (
+  id                        uuid primary key default gen_random_uuid(),
+  studio_id                 uuid not null references studios(id) on delete cascade,
+  name                      text not null,
+  weekday                   smallint not null check (weekday between 0 and 6),
+  start_time_local          time not null,
+  duration_minutes          integer not null
+                              check (duration_minutes > 0
+                                     and duration_minutes <= 480),
+  instructor_id             uuid references staff(id) on delete set null,
+  capacity                  integer not null check (capacity > 0),
+  cancellation_window_hours integer not null default 12,
+  check_in_window_minutes   integer not null default 30,
+  valid_from                date not null default current_date,
+  valid_until               date,
+  created_at                timestamptz not null default now(),
+  updated_at                timestamptz not null default now(),
+  constraint class_templates_valid_range_coherent
+    check (valid_until is null or valid_until > valid_from)
+);
+
+create index if not exists idx_class_templates_studio on class_templates(studio_id);
+create index if not exists idx_class_templates_studio_weekday_time
+  on class_templates(studio_id, weekday, start_time_local);
+
+-- Generic updated_at trigger function (new in v0.24.0; reusable).
+create or replace function set_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists class_templates_set_updated_at on class_templates;
+create trigger class_templates_set_updated_at
+  before update on class_templates
+  for each row execute function set_updated_at();
+
+-- Late FK on classes.template_id (declared in the classes table above
+-- as `template_id uuid` without REFERENCES because schema.sql defines
+-- classes BEFORE staff, and class_templates references staff).
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.table_constraints
+    where constraint_schema = 'public'
+      and table_name = 'classes'
+      and constraint_name = 'classes_template_id_fkey'
+  ) then
+    alter table classes
+      add constraint classes_template_id_fkey
+      foreign key (template_id) references class_templates(id) on delete set null;
+  end if;
+end$$;
+
 -- ═══ v0.23.0 (M4) — tenant_isolation policies on every tenant-scoped
 -- table. One policy each, FOR ALL (SELECT/INSERT/UPDATE/DELETE), using
 -- and with-check both bound to studio_id = current_studio_id(). Service
@@ -274,6 +369,14 @@ create policy staff_tenant_isolation on staff
 alter table classes enable row level security;
 drop policy if exists classes_tenant_isolation on classes;
 create policy classes_tenant_isolation on classes
+  for all
+  using (studio_id = current_studio_id())
+  with check (studio_id = current_studio_id());
+
+-- v0.24.0 (Sprint A) — class_templates mirrors classes.
+alter table class_templates enable row level security;
+drop policy if exists class_templates_tenant_isolation on class_templates;
+create policy class_templates_tenant_isolation on class_templates
   for all
   using (studio_id = current_studio_id())
   with check (studio_id = current_studio_id());

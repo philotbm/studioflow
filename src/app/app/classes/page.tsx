@@ -207,9 +207,17 @@ export default function ClassesPage() {
     <main className="mx-auto max-w-2xl">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Classes</h1>
-        <button className="rounded border border-white/20 px-3 py-1.5 text-sm text-white/60 hover:text-white hover:border-white/40">
-          Add class
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/app/classes/templates"
+            className="rounded border border-white/20 px-3 py-1.5 text-sm text-white/60 hover:text-white hover:border-white/40"
+          >
+            Templates
+          </Link>
+          <button className="rounded border border-white/20 px-3 py-1.5 text-sm text-white/60 hover:text-white hover:border-white/40">
+            Add class
+          </button>
+        </div>
       </div>
 
       {/* v0.8.6 filter toggle */}
