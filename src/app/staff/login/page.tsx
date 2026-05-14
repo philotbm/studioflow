@@ -59,6 +59,18 @@ function StaffLoginForm() {
       return;
     }
     setStatus({ kind: "sending" });
+    // v0.23.3 — emailRedirectTo MUST land at /auth/callback.
+    //
+    // Verified shape on prod: `${origin}/auth/callback?intent=staff&next=/app`.
+    // Both `https://www.studioflow.ie/auth/callback` and
+    // `https://studioflow.ie/auth/callback` are on the Supabase Auth
+    // Redirect URLs allow-list. Supabase's redirect_to check is a prefix
+    // match against that list, so the additional query params are fine.
+    //
+    // DO NOT pass the bare origin — Supabase will accept it but the
+    // magic link then lands at `${origin}/?code=…`, which is not the
+    // App Router callback route. The user ends up at `/` with a code
+    // they can't exchange, looks like "login is broken."
     const callbackUrl = new URL("/auth/callback", window.location.origin);
     callbackUrl.searchParams.set("intent", "staff");
     callbackUrl.searchParams.set("next", next || "/app");
