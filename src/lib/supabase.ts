@@ -95,7 +95,7 @@ let _serviceInitAttempted = false;
  * doesn't otherwise authenticate the caller (Bearer token, Stripe
  * signature, or trust-the-source).
  *
- * Used by exactly six surfaces per docs/adr/0001-multi-tenancy.md
+ * Used by exactly seven surfaces per docs/adr/0001-multi-tenancy.md
  * Decision 1 and docs/specs/M4_rls.md:
  *
  *   - src/app/api/stripe/webhook/route.ts — Stripe signature
@@ -123,8 +123,14 @@ let _serviceInitAttempted = false;
  *     service-role client to keep the helper symmetric with the cron;
  *     studio_id is verified against the template's studio_id before
  *     any mutation.
+ *   - v0.25.0: src/app/api/cron/drain-email-queue/route.ts — Vercel
+ *     cron with CRON_SECRET Bearer auth. Drains pending email_queue
+ *     rows across all studios. The queue rows themselves carry
+ *     studio_id (snapshotted at queue time by the DB triggers); the
+ *     cron does not derive or override studio_id, so the service-role
+ *     bypass is safe.
  *
- * If you add a seventh caller, document it here AND in ADR-0001
+ * If you add an eighth caller, document it here AND in ADR-0001
  * Decision 1's exception list. RLS is not enforced for this client
  * — the caller is responsible for the studio_id discipline.
  *

@@ -11,6 +11,9 @@ const navItems = [
   { label: "Members", href: "/app/members" },
   { label: "Plans", href: "/app/plans" },
   { label: "Revenue", href: "/app/revenue" },
+  // v0.25.0 — Sprint B added /app/settings/email; the nav points at
+  // /app/settings as the umbrella surface for future settings panes.
+  { label: "Settings", href: "/app/settings/email" },
 ];
 
 /**

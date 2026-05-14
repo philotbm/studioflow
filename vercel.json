@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/materialise-templates",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/drain-email-queue",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

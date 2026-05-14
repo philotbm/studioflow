@@ -30,6 +30,10 @@ create table if not exists studios (
   -- Configurable per studio; 8 weeks suits weekly-cycle studios.
   materialisation_horizon_weeks integer not null default 8
                            check (materialisation_horizon_weeks between 2 and 26),
+  -- v0.25.0 (Sprint B) — per-studio blanket opt-out for transactional
+  -- email. Default ON. Triggers on booking_events / purchases check
+  -- this before queuing; cron drains the queue separately.
+  transactional_emails_enabled boolean not null default true,
   created_at             timestamptz not null default now()
 );
 
