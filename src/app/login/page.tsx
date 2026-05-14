@@ -72,6 +72,12 @@ function LoginForm() {
       return;
     }
     setStatus({ kind: "sending" });
+    // v0.23.3 — emailRedirectTo MUST land at /auth/callback.
+    // See the matching comment in src/app/staff/login/page.tsx for the
+    // full rationale. tl;dr: passing the bare origin (or anything that
+    // doesn't include `/auth/callback`) makes Supabase deliver a magic
+    // link whose target is the root page with a `?code=` param the
+    // callback never gets to exchange — looks like "login is broken."
     const callbackUrl = new URL("/auth/callback", window.location.origin);
     if (next) callbackUrl.searchParams.set("next", next);
     const { error: otpError } = await client.auth.signInWithOtp({

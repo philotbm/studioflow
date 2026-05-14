@@ -323,3 +323,47 @@ SELECT 'e0000000-0000-0000-0000-000000000001'::uuid, id, 'Phil', 'owner'
   FROM auth.users
  WHERE email = 'philotbm@gmail.com'
 ON CONFLICT (studio_id, user_id) DO NOTHING;
+
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- DEMO MEMBER UNLINK GUARD — v0.23.3
+-- ═══════════════════════════════════════════════════════════════════════
+-- Defensive: ensure no curated demo-studio members row carries a real
+-- auth.users.user_id link after a seed run. The seed INSERTs above do
+-- NOT set user_id, but ON CONFLICT (id) DO NOTHING means a row whose
+-- user_id was accidentally set between seeds (via a historical
+-- /auth/claim handshake by the owner, a manual SQL fix, or a now-removed
+-- debug endpoint) would stay linked.
+--
+-- Concrete v0.23.x bug this guard prevents: Phil's owner user_id
+-- (philotbm@gmail.com) ended up linked to the `emma-kelly` demo row,
+-- causing /auth/callback's member branch to redirect him to
+-- /my/emma-kelly (a 404 for him) when he hit /login. Data fix was
+-- applied manually to prod on 2026-05-14; this UPDATE makes the fix
+-- durable across re-seeds.
+--
+-- Scope is intentionally narrow: the curated `a0000001-…` member rows
+-- (numbered 1-11, the "real demo" members) AND the staff seed's owner
+-- email. Demo-tester scenarios that legitimately need a user_id link
+-- on these rows must use the qa-* fixtures (managed by /api/qa/refresh),
+-- never the curated demo set. If a future tester legitimately claims one
+-- of these rows via /auth/claim, the next seed run will silently unlink
+-- it — which is the intended behaviour for a fresh demo handoff.
+
+UPDATE members
+SET user_id = NULL
+WHERE studio_id = 'e0000000-0000-0000-0000-000000000001'::uuid
+  AND slug IN (
+    'emma-kelly',
+    'ciara-byrne',
+    'declan-power',
+    'saoirse-flynn',
+    'sean-brennan',
+    'clodagh-murray',
+    'conor-brady',
+    'aoife-nolan',
+    'padraig-roche',
+    'fiona-healy',
+    'mairead-kinsella'
+  )
+  AND user_id IS NOT NULL;
