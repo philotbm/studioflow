@@ -6,20 +6,25 @@
 // /api/health exists.
 import "@/lib/sentry-init";
 
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { withSentryCapture } from "@/lib/with-sentry";
 
+/**
+ * Public health endpoint. Returns 200 + a minimal JSON body so a
+ * watchdog or a deploy-readiness probe can confirm the server boots
+ * and the Sentry init side-effect import resolved.
+ *
+ * `version` is bumped manually on each SemVer release. Keep it in
+ * sync with package.json. (We don't import package.json here on
+ * purpose — it'd pull the whole manifest into the route's serverless
+ * bundle.)
+ */
 export const GET = withSentryCapture(
-  async function GET(req: NextRequest): Promise<NextResponse> {
-    // v0.23.2 verification harness — REMOVED in v0.23.3.
-    if (req.nextUrl.searchParams.get("throw") === "1") {
-      throw new Error("Sentry wrapper smoke — deliberate throw from /api/health");
-    }
+  async function GET(): Promise<NextResponse> {
     return NextResponse.json({
       status: "ok",
       system: "studioflow",
-      version: "v0.23.2",
-      release: "Sentry wrapper rollout",
+      version: "v0.23.5",
     });
   },
   { method: "GET", parameterizedRoute: "/api/health" },
