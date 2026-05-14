@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { getSupabaseBrowserAuthClient } from "@/lib/supabase";
+import { setLoginIntent } from "@/app/auth/actions";
 
 /**
  * v0.21.0 Staff login.
@@ -59,24 +60,28 @@ function StaffLoginForm() {
       return;
     }
     setStatus({ kind: "sending" });
-    // v0.23.3 — emailRedirectTo MUST land at /auth/callback.
+    // v0.23.4 — Intent + next ride in a server-set HttpOnly cookie, not
+    // on the emailRedirectTo query string.
     //
-    // Verified shape on prod: `${origin}/auth/callback?intent=staff&next=/app`.
-    // Both `https://www.studioflow.ie/auth/callback` and
-    // `https://studioflow.ie/auth/callback` are on the Supabase Auth
-    // Redirect URLs allow-list. Supabase's redirect_to check is a prefix
-    // match against that list, so the additional query params are fine.
+    // Background: Supabase's redirect-URL allow-list is a strict prefix
+    // match. v0.23.3's emailRedirectTo (`${origin}/auth/callback?intent=…&next=…`)
+    // didn't match the strict entry `${origin}/auth/callback`, so Supabase
+    // silently fell back to Site URL and the magic link landed at
+    // `${origin}/?code=…`. The 2026-05-14 interim fix added three
+    // wildcard allow-list entries; v0.23.4 reverts to strict matching
+    // by stripping the query string here and moving intent+next into a
+    // separate cookie set by the setLoginIntent server action.
     //
-    // DO NOT pass the bare origin — Supabase will accept it but the
-    // magic link then lands at `${origin}/?code=…`, which is not the
-    // App Router callback route. The user ends up at `/` with a code
-    // they can't exchange, looks like "login is broken."
-    const callbackUrl = new URL("/auth/callback", window.location.origin);
-    callbackUrl.searchParams.set("intent", "staff");
-    callbackUrl.searchParams.set("next", next || "/app");
+    // emailRedirectTo is now EXACTLY `${origin}/auth/callback` — no
+    // query params, no path suffix. Matches the strict allow-list.
+    await setLoginIntent({ intent: "staff", next: next || "/app" });
+    const emailRedirectTo = new URL(
+      "/auth/callback",
+      window.location.origin,
+    ).toString();
     const { error: otpError } = await client.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: callbackUrl.toString() },
+      options: { emailRedirectTo },
     });
     if (otpError) {
       setStatus({ kind: "error", text: otpError.message });

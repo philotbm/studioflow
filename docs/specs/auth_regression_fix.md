@@ -1,11 +1,16 @@
-# Auth-chain regression fix (v0.23.3)
+# Auth-chain regression fix (v0.23.3 → v0.23.4)
 
 **Status:** FIX — diagnosis converged via Cowork's live prod SQL +
 dashboard checks on 2026-05-14 (see PR #79 conversation for the full
-diagnostic transcript). H2 confirmed; H1, H3, H4, H5 ruled out empirically.
+diagnostic transcript). H2 confirmed; H1, H3, H4, H5 ruled out
+empirically. v0.23.3 (PR #79) shipped the staff-first callback and
+seed unlink guard. v0.23.4 follows up by moving `intent` + `next` out
+of `emailRedirectTo` and into an HttpOnly cookie so the Supabase
+redirect-URL allow-list can be tightened back to strict matching.
 
-**Branch:** `chore/auth-regression-investigation` off `origin/main` @
-`8259cc4`.
+**Branch:** v0.23.3 was `chore/auth-regression-investigation` off
+`origin/main` @ `8259cc4`. v0.23.4 is
+`chore/login-intent-cookie` off `origin/main` @ `a91c02c`.
 
 ## Root cause
 
@@ -206,3 +211,119 @@ guard would then re-unlink on the next seed run.
   escape hatch on `/auth/callback` to let owners test the member
   surface without signing out first? Probably not for pre-pilot;
   evaluate post-pilot if testers ask for it.
+
+---
+
+## Resolution and follow-up (v0.23.4 — login-intent cookie)
+
+### What happened between v0.23.3 and v0.23.4
+
+After v0.23.3 (PR #79) shipped, the staff-first callback worked, but
+end-to-end prod login still failed: magic links landed at
+`https://studioflow.ie/?code=…` (site root) instead of `/auth/callback`.
+
+Investigation showed the cause was upstream of the callback. The login
+forms passed `emailRedirectTo = ${origin}/auth/callback?intent=staff&next=/app`.
+Supabase's redirect-URL allow-list does a **strict prefix match**: the
+allow-list entry `https://studioflow.ie/auth/callback` did NOT match
+the request value `…/auth/callback?intent=staff&next=/app` because the
+query string was on the URL the form passed. Supabase silently fell
+back to Site URL (`https://www.studioflow.ie/`) and delivered the
+magic link to the root path with `?code=…`. The callback never ran.
+
+Cowork's interim fix (2026-05-14) was to add three wildcard entries
+to the allow-list:
+
+- `https://studioflow.ie/auth/callback?**`
+- `https://www.studioflow.ie/auth/callback?**`
+- `https://studioflow-wine.vercel.app/auth/callback?**`
+
+The wildcards work but loosen the security posture: any query string
+on the callback path is now accepted by Supabase. v0.23.4 closes that
+hole.
+
+### v0.23.4 design — HttpOnly cookie carries the intent
+
+`signInWithOtp` calls in both login forms now pass exactly
+`emailRedirectTo = ${origin}/auth/callback` (no query string, no path
+suffix). This matches the original strict allow-list entry. `intent`
+and `next` ride along in a separate channel:
+
+1. **Form submit (client)** calls the `setLoginIntent` server action
+   (`src/app/auth/actions.ts`) BEFORE `signInWithOtp`. The action sets
+   an HttpOnly, SameSite=Lax cookie (`sf_login_intent`) carrying
+   base64url(JSON({ intent, next, exp })). TTL is 10 minutes.
+
+2. **`/auth/callback`** reads and clears the cookie up-front via
+   `consumeLoginIntent()`. Resolves `intent` → "member" by default if
+   the cookie is missing or fails decode. Resolves `next` → null on
+   the same conditions. Then runs the existing v0.23.3 staff-first
+   decision tree using those values.
+
+3. The cookie is plaintext (no HMAC). Threat model: a cross-origin
+   script can neither set nor read an HttpOnly cookie, so the only
+   tamperer would already control the server (game over anyway).
+   Garbage values fail at decode and trigger the fallback path.
+
+### Cross-device limitation (acceptable degradation)
+
+Cookies don't transfer between browsers. If a user submits the form
+on device A and clicks the magic link on device B, the callback runs
+without the intent cookie and falls back to intent="member" + next=null.
+Staff users still resolve correctly (the staff-row lookup wins,
+regardless of intent). Members still resolve correctly (the linked
+member row drives the redirect, regardless of next). The only
+degradation: a member with a saved `next=/some/page` whose magic-link
+click crosses devices ends up at `/my/<slug>` instead of `/some/page`.
+Acceptable for pre-pilot.
+
+### Allow-list revert (Cowork lane)
+
+After v0.23.4 deploys to prod AND Phil verifies end-to-end login still
+works with the strict allow-list, Cowork **reverts** the three
+wildcard entries added on 2026-05-14:
+
+- Remove `https://studioflow.ie/auth/callback?**`
+- Remove `https://www.studioflow.ie/auth/callback?**`
+- Remove `https://studioflow-wine.vercel.app/auth/callback?**`
+
+The four original strict entries stay:
+
+- `https://www.studioflow.ie/auth/callback`
+- `https://studioflow.ie/auth/callback`
+- `https://studioflow-wine.vercel.app/auth/callback`
+- `http://localhost:3000/auth/callback`
+
+**Order of operations matters:** code change ships first → Phil
+verifies prod login with strict matching → Cowork reverts wildcards.
+Reverting first would re-break login.
+
+### v0.23.4 files
+
+- `src/lib/login-intent.ts` (new) — encode/decode helpers + cookie
+  name constant + TTL constant.
+- `src/app/auth/actions.ts` (new) — `setLoginIntent` server action.
+- `src/app/auth/callback/route.ts` — drop URL `intent`/`next` query
+  parsing; add `consumeLoginIntent()` cookie reader; preserve v0.23.3
+  staff-first decision tree.
+- `src/app/login/page.tsx`, `src/app/staff/login/page.tsx` — call
+  `setLoginIntent` before `signInWithOtp`; pass clean `emailRedirectTo`.
+- `package.json` — version bump.
+
+### v0.23.4 verification matrix
+
+| # | Surface | Expected outcome |
+|---|---|---|
+| a | `/staff/login` + magic link to `philotbm@gmail.com` | Magic link lands at `${origin}/auth/callback?code=…` (no other params); callback completes; redirects to `/app` |
+| b | `/login` + magic link to a demo member with `next=/my/some-page` | Magic link lands at `${origin}/auth/callback?code=…`; callback honours `next` if safe |
+| c | Cross-device magic-link click (submit form on phone, click on laptop) | No intent cookie present; callback falls back to staff-first default and member resolution; user lands somewhere sensible (`/app` for staff, `/my/<slug>` for linked member, `/login?error=no-member` otherwise) |
+| d | Inspect Supabase Auth Logs after a login attempt | Single `magic_link_requested` event; magic-link target is exactly `${origin}/auth/callback` — strict allow-list match |
+| e | After Cowork removes the three wildcard entries | Login still works on prod (Phil re-tests) |
+
+### v0.23.4 rollback plan
+
+If v0.23.4 breaks prod login: `git revert <merge-commit>`. The
+emailRedirectTo URL goes back to carrying `?intent=…&next=…`, which
+matches Cowork's still-in-place wildcard allow-list entries. Recovery
+in ~5 min. Critical: do NOT revert the wildcard entries until after
+v0.23.4 verification passes.

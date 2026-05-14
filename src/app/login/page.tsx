@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { getSupabaseBrowserAuthClient } from "@/lib/supabase";
+import { setLoginIntent } from "@/app/auth/actions";
 
 /**
  * v0.20.0 / v0.20.1 Member login.
@@ -72,17 +73,20 @@ function LoginForm() {
       return;
     }
     setStatus({ kind: "sending" });
-    // v0.23.3 — emailRedirectTo MUST land at /auth/callback.
-    // See the matching comment in src/app/staff/login/page.tsx for the
-    // full rationale. tl;dr: passing the bare origin (or anything that
-    // doesn't include `/auth/callback`) makes Supabase deliver a magic
-    // link whose target is the root page with a `?code=` param the
-    // callback never gets to exchange — looks like "login is broken."
-    const callbackUrl = new URL("/auth/callback", window.location.origin);
-    if (next) callbackUrl.searchParams.set("next", next);
+    // v0.23.4 — Intent + next ride in a server-set HttpOnly cookie, not
+    // on the emailRedirectTo query string. See the matching comment in
+    // src/app/staff/login/page.tsx for the full rationale.
+    //
+    // emailRedirectTo is now EXACTLY `${origin}/auth/callback` — no
+    // query params. Matches the strict Supabase Auth allow-list entry.
+    await setLoginIntent({ intent: "member", next: next || null });
+    const emailRedirectTo = new URL(
+      "/auth/callback",
+      window.location.origin,
+    ).toString();
     const { error: otpError } = await client.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: callbackUrl.toString() },
+      options: { emailRedirectTo },
     });
     if (otpError) {
       setStatus({ kind: "error", text: otpError.message });
